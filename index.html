@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Eetmeter</title>
+  <meta name="theme-color" content="#2f7d4f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Eetmeter">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="day-prev" aria-label="Vorige dag">‹</button>
+    <h1 id="day-label">Vandaag</h1>
+    <button class="icon-btn" id="day-next" aria-label="Volgende dag">›</button>
+  </header>
+
+  <main>
+    <!-- Vandaag -->
+    <section class="view" id="view-today">
+      <div class="card totals">
+        <div class="kcal-line">
+          <span class="kcal-big" id="tot-kcal">0</span>
+          <span class="muted">/ <span id="goal-kcal">2000</span> kcal</span>
+        </div>
+        <div class="bar"><div class="bar-fill" id="kcal-bar"></div></div>
+        <div class="macros">
+          <div><b id="tot-protein">0</b><span>eiwit (g)</span></div>
+          <div><b id="tot-carbs">0</b><span>koolh. (g)</span></div>
+          <div><b id="tot-fat">0</b><span>vet (g)</span></div>
+          <div><b id="tot-fiber">0</b><span>vezels (g)</span></div>
+        </div>
+      </div>
+      <div id="meals"></div>
+      <p class="empty muted" id="today-empty">Nog niets gegeten vandaag. Tik op <b>Toevoegen</b>.</p>
+    </section>
+
+    <!-- Toevoegen -->
+    <section class="view" id="view-add" hidden>
+      <div class="draft-banner card" id="draft-banner" hidden>
+        Je voegt toe aan een maaltijd met <b id="draft-count">0</b> item(s).
+        <button class="link" data-go="review">Terug naar overzicht</button>
+      </div>
+      <div class="add-grid">
+        <button class="add-tile" data-go="photo"><span class="tile-icon">📷</span>Foto van je eten</button>
+        <button class="add-tile" data-go="barcode"><span class="tile-icon">▥</span>Barcode scannen</button>
+        <button class="add-tile" data-go="describe"><span class="tile-icon">✎</span>Beschrijven</button>
+        <button class="add-tile" data-go="search"><span class="tile-icon">⌕</span>Product zoeken</button>
+      </div>
+      <button class="btn secondary wide" id="add-manual">+ Handmatig invoeren</button>
+      <h2 class="section-title" id="recent-title" hidden>Recent gegeten</h2>
+      <div class="chips" id="recent"></div>
+    </section>
+
+    <!-- Foto -->
+    <section class="view" id="view-photo" hidden>
+      <div class="row">
+        <label class="btn wide">Foto maken
+          <input type="file" accept="image/*" capture="environment" id="photo-camera" hidden>
+        </label>
+        <label class="btn secondary wide">Uit galerij
+          <input type="file" accept="image/*" id="photo-gallery" hidden>
+        </label>
+      </div>
+      <img id="photo-preview" alt="Gekozen foto" hidden>
+      <label class="field">Extra info (optioneel)
+        <textarea id="photo-note" rows="2" placeholder="bijv. gebakken in 2 el olie, grote portie"></textarea>
+      </label>
+      <button class="btn wide" id="photo-analyze" disabled>Analyseren</button>
+      <p class="status" id="photo-status"></p>
+    </section>
+
+    <!-- Beschrijven -->
+    <section class="view" id="view-describe" hidden>
+      <label class="field">Wat heb je gegeten?
+        <textarea id="describe-text" rows="4" placeholder="bijv. 2 volkoren boterhammen met halvarine en jonge kaas, glas halfvolle melk"></textarea>
+      </label>
+      <button class="btn wide" id="describe-analyze">Berekenen</button>
+      <p class="status" id="describe-status"></p>
+    </section>
+
+    <!-- Barcode -->
+    <section class="view" id="view-barcode" hidden>
+      <div id="reader"></div>
+      <div class="row">
+        <button class="btn wide" id="scan-start">Camera starten</button>
+        <label class="btn secondary wide">Foto van barcode
+          <input type="file" accept="image/*" capture="environment" id="scan-file" hidden>
+        </label>
+      </div>
+      <form class="row" id="barcode-form">
+        <input type="text" inputmode="numeric" id="barcode-input" placeholder="of typ de barcode">
+        <button class="btn" type="submit">Opzoeken</button>
+      </form>
+      <p class="status" id="barcode-status"></p>
+    </section>
+
+    <!-- Zoeken -->
+    <section class="view" id="view-search" hidden>
+      <form class="row" id="search-form">
+        <input type="search" id="search-input" placeholder="bijv. Optimel, pindakaas, Lay's naturel">
+        <button class="btn" type="submit">Zoek</button>
+      </form>
+      <p class="status" id="search-status"></p>
+      <div id="search-results"></div>
+    </section>
+
+    <!-- Controleren -->
+    <section class="view" id="view-review" hidden>
+      <p class="muted small" id="review-note"></p>
+      <div id="review-items"></div>
+      <button class="btn secondary wide" data-go="add">+ Nog iets toevoegen</button>
+      <div class="card review-total">
+        <div><b id="review-kcal">0</b> kcal</div>
+        <div class="muted small" id="review-macros"></div>
+      </div>
+      <label class="field">Maaltijd
+        <select id="review-meal">
+          <option>Ontbijt</option>
+          <option>Lunch</option>
+          <option>Diner</option>
+          <option>Tussendoor</option>
+        </select>
+      </label>
+      <div class="row">
+        <button class="btn secondary wide" id="review-cancel">Annuleren</button>
+        <button class="btn wide" id="review-save">Opslaan</button>
+      </div>
+      <button class="btn danger wide" id="review-delete" hidden>Maaltijd verwijderen</button>
+    </section>
+
+    <!-- Instellingen -->
+    <section class="view" id="view-settings" hidden>
+      <h2 class="section-title">Doelen</h2>
+      <div class="row">
+        <label class="field">kcal per dag<input type="number" id="set-goal-kcal" min="0"></label>
+        <label class="field">eiwit (g)<input type="number" id="set-goal-protein" min="0"></label>
+      </div>
+
+      <h2 class="section-title">Fotoherkenning</h2>
+      <label class="field">Dienst
+        <select id="set-provider">
+          <option value="gemini">Google Gemini (gratis laag)</option>
+          <option value="ollama">Ollama (lokaal op je pc)</option>
+        </select>
+      </label>
+      <div id="gemini-settings">
+        <label class="field">Gemini API-key
+          <input type="password" id="set-gemini-key" autocomplete="off" placeholder="plak hier je key">
+        </label>
+        <p class="muted small">Gratis aan te maken op <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. De key blijft alleen op dit apparaat.</p>
+        <label class="field">Model
+          <input type="text" id="set-gemini-model" list="gemini-models">
+          <datalist id="gemini-models">
+            <option value="gemini-3.6-flash">
+            <option value="gemini-3.5-flash-lite">
+            <option value="gemini-2.5-flash">
+          </datalist>
+        </label>
+      </div>
+      <div id="ollama-settings" hidden>
+        <label class="field">Ollama-adres<input type="url" id="set-ollama-url"></label>
+        <label class="field">Model<input type="text" id="set-ollama-model"></label>
+      </div>
+      <button class="btn secondary wide" id="test-ai">Verbinding testen</button>
+      <p class="status" id="settings-status"></p>
+
+      <h2 class="section-title">Back-up</h2>
+      <p class="muted small">Je gegevens staan alleen in deze browser. Maak af en toe een back-up.</p>
+      <div class="row">
+        <button class="btn secondary wide" id="export">Exporteren</button>
+        <label class="btn secondary wide">Importeren
+          <input type="file" accept="application/json,.json" id="import" hidden>
+        </label>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-go="today" class="active"><span>☰</span>Vandaag</button>
+    <button data-go="add"><span>＋</span>Toevoegen</button>
+    <button data-go="settings"><span>⚙</span>Instellingen</button>
+  </nav>
+
+  <div class="toast" id="toast" hidden></div>
+</body>
+</html>
