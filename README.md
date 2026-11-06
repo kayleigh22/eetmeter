@@ -6,6 +6,8 @@ Een gratis app om je calorieën en voedingswaardes bij te houden. Je hebt geen a
 - **Beschrijven**: typ bijvoorbeeld "2 boterhammen met kaas" en Gemini rekent het uit.
 - **Barcode scannen** en **product zoeken**: via Open Food Facts, met exacte waardes van de verpakking.
 - **Daglog** met kcal, eiwit, koolhydraten, vet en vezels, en een dagdoel.
+- **Advies** per maaltijd en per dag, op basis van de Schijf van Vijf. Je krijgt een oordeel (goed / redelijk / kan beter) en concrete alternatieven, zoals "in plaats van wit brood → 2 sneetjes volkorenbrood".
+- **Nutri-Score** (A t/m E) bij gescande producten, als Open Food Facts die kent.
 
 Alles wat je invoert blijft in de browser op je telefoon; er draait geen server. Het is een webpagina die je als app op je beginscherm zet.
 

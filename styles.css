@@ -149,6 +149,34 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .per100 input { padding: 6px; font-size: 16px; }
 .review-total b { font-size: 1.5rem; }
 
+/* Nutri-Score (officiële kleuren) */
+.ns {
+  display: inline-block; min-width: 1.4em; margin-right: 6px; padding: 0 4px; border-radius: 4px;
+  font-size: .75rem; font-weight: 700; line-height: 1.5; text-align: center; color: #fff; vertical-align: 1px;
+}
+.ns-a { background: #038141; }
+.ns-b { background: #85bb2f; }
+.ns-c { background: #fecb02; color: #1c2420; }
+.ns-d { background: #ee8100; }
+.ns-e { background: #e63e11; }
+
+/* Advies */
+.rating-goed { --rating: var(--accent); }
+.rating-redelijk { --rating: #c9a227; }
+.rating-kan-beter { --rating: var(--over); }
+.advice { border-left: 4px solid var(--rating); display: flex; flex-direction: column; gap: 10px; }
+.advice p { margin: 0; }
+.advice-head { display: flex; flex-direction: column; gap: 4px; }
+.rating, .rating-pill {
+  align-self: flex-start; background: var(--rating); color: #fff; font-weight: 700;
+  border-radius: 99px; padding: 1px 10px; font-size: .8rem;
+}
+.rating-pill { display: inline-block; margin-right: 8px; font-size: .72rem; padding: 0 8px; }
+.positives { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.positives li::before { content: "✓ "; color: var(--accent); font-weight: 700; }
+.tip { background: var(--bg); border-radius: 10px; padding: 8px 10px; font-size: .92rem; }
+.tip-try { font-weight: 600; color: var(--accent); }
+
 .tabbar {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
   display: flex; background: var(--card); border-top: 1px solid var(--line);

@@ -77,11 +77,17 @@ const num = (v) => {
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function makeItem({ name, grams, per100 }) {
+function makeItem({ name, grams, per100, nutriscore }) {
   const p = {};
   for (const k of NUTRIENTS) p[k] = num(per100?.[k]);
-  return { name: String(name || 'Onbekend'), grams: num(grams) || 100, per100: p };
+  const item = { name: String(name || 'Onbekend'), grams: num(grams) || 100, per100: p };
+  if (/^[a-e]$/.test(nutriscore || '')) item.nutriscore = nutriscore;
+  return item;
 }
+// Nutri-Score-label (A t/m E) van Open Food Facts, alleen bij producten met barcode.
+const nutriBadge = (it) => it.nutriscore
+  ? `<span class="ns ns-${it.nutriscore}" title="Nutri-Score ${it.nutriscore.toUpperCase()}">${it.nutriscore.toUpperCase()}</span>`
+  : '';
 function itemTotals(item) {
   const t = {};
   for (const k of NUTRIENTS) t[k] = (item.per100[k] * item.grams) / 100;
@@ -161,18 +167,20 @@ function renderToday() {
   const sorted = [...entries].sort((a, b) => MEALS.indexOf(a.meal) - MEALS.indexOf(b.meal) || a.time.localeCompare(b.time));
   $('#meals').innerHTML = sorted.map((e) => {
     const et = sumItems(e.items);
+    const advice = e.advice && e.advice.sig === itemsSig(e.items) ? e.advice : null;
     return `<div class="card meal">
       <div class="meal-head" data-entry="${e.id}">
         <b>${esc(e.meal)} <span class="muted small">${esc(e.time)}</span></b>
-        <span class="muted">${round(et.kcal)} kcal ›</span>
+        <span class="muted">${advice ? `<span class="rating-pill ${ratingClass(advice.rating)}">${RATINGS[advice.rating]}</span>` : ''}${round(et.kcal)} kcal ›</span>
       </div>
       ${e.items.map((it) => `<div class="meal-item">
-        <span>${esc(it.name)}</span>
+        <span>${nutriBadge(it)}${esc(it.name)}</span>
         <span class="num">${round(it.grams)} g · ${round(itemTotals(it).kcal)} kcal</span>
       </div>`).join('')}
     </div>`;
   }).join('');
   $('#today-empty').hidden = entries.length > 0;
+  renderDayAdvice();
 }
 
 $('#meals').addEventListener('click', (e) => {
@@ -180,7 +188,9 @@ $('#meals').addEventListener('click', (e) => {
   if (!head) return;
   const entry = (log[state.date] || []).find((x) => x.id === head.dataset.entry);
   if (!entry) return;
-  state.draft = { items: entry.items.map((it) => makeItem(it)), entryId: entry.id, meal: entry.meal, note: '' };
+  state.draft = {
+    items: entry.items.map((it) => makeItem(it)), entryId: entry.id, meal: entry.meal, note: '', advice: entry.advice || null,
+  };
   show('review');
 });
 
@@ -214,7 +224,7 @@ function renderAdd() {
 }
 
 function addToDraft(items, note = '') {
-  if (!state.draft) state.draft = { items: [], entryId: null, meal: defaultMeal(), note: '' };
+  if (!state.draft) state.draft = { items: [], entryId: null, meal: defaultMeal(), note: '', advice: null };
   state.draft.items.push(...items);
   if (note) state.draft.note = note;
   show('review');
@@ -227,6 +237,7 @@ $('#add-manual').onclick = () => addToDraft([makeItem({ name: '', grams: 100, pe
 function renderReview() {
   const d = state.draft;
   if (!d) return show('add');
+  setStatus('#review-advice-status', '');
   $('#review-note').textContent = d.note || '';
   $('#review-meal').value = d.meal;
   $('#review-delete').hidden = !d.entryId;
@@ -238,7 +249,7 @@ function renderReview() {
         <span class="unit">g</span>
         <button class="del" data-del="${i}" aria-label="Verwijderen">×</button>
       </div>
-      <div class="item-sum"><span class="item-kcal"></span>
+      <div class="item-sum"><span>${nutriBadge(it)}<span class="item-kcal"></span></span>
         <button class="link small" data-toggle="${i}">per 100 g aanpassen</button></div>
       <div class="per100" hidden>
         ${NUTRIENTS.map((k) => `<label>${NUTRIENT_LABELS[k]}
@@ -264,6 +275,7 @@ function updateReviewTotals() {
   $('#review-macros').textContent =
     `eiwit ${round(t.protein)} g · koolhydraten ${round(t.carbs)} g · vet ${round(t.fat)} g · vezels ${round(t.fiber)} g`;
   $('#review-save').disabled = d.items.length === 0;
+  renderReviewAdvice();
 }
 
 $('#review-items').addEventListener('input', (e) => {
@@ -298,13 +310,14 @@ $('#review-cancel').onclick = () => {
 $('#review-save').onclick = () => {
   const d = state.draft;
   const items = d.items.map((it) => ({ ...it, name: it.name.trim() || 'Onbekend' }));
+  const advice = d.advice && d.advice.sig === itemsSig(items) ? d.advice : null;
   const day = (log[state.date] ||= []);
   if (d.entryId) {
     const entry = day.find((x) => x.id === d.entryId);
-    if (entry) Object.assign(entry, { meal: d.meal, items });
+    if (entry) Object.assign(entry, { meal: d.meal, items, advice });
   } else {
     const time = new Date().toTimeString().slice(0, 5);
-    day.push({ id: uid(), meal: d.meal, time, items });
+    day.push({ id: uid(), meal: d.meal, time, items, advice });
   }
   save('eetmeter.log', log);
   state.draft = null;
@@ -368,16 +381,20 @@ function aiResultToItems(result) {
 
 async function analyze({ image, text }) {
   const prompt = AI_PROMPT + (text ? `\n\nInformatie van de gebruiker: ${text}` : '');
-  return settings.provider === 'ollama' ? analyzeOllama(prompt, image) : analyzeGemini(prompt, image);
+  return askAI(prompt, AI_SCHEMA, image);
 }
 
-async function analyzeGemini(prompt, image) {
+function askAI(prompt, schema, image = null) {
+  return settings.provider === 'ollama' ? callOllama(prompt, schema, image) : callGemini(prompt, schema, image);
+}
+
+async function callGemini(prompt, schema, image) {
   if (!settings.geminiKey) throw new Error('Vul eerst je Gemini API-key in bij Instellingen.');
   const parts = [{ text: prompt }];
   if (image) parts.push({ inline_data: { mime_type: image.mime, data: image.data } });
   const body = JSON.stringify({
     contents: [{ role: 'user', parts }],
-    generationConfig: { responseMimeType: 'application/json', responseSchema: AI_SCHEMA, temperature: 0.2 },
+    generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.2 },
   });
 
   // Gekozen model eerst; bij een limiet of onbekend model de volgende proberen.
@@ -407,16 +424,15 @@ async function analyzeGemini(prompt, image) {
   throw new Error(lastError);
 }
 
-async function analyzeOllama(prompt, image) {
-  // Ollama verwacht standaard JSON-schema (kleine letters voor de types).
-  const schema = JSON.parse(JSON.stringify(AI_SCHEMA).toLowerCase());
+async function callOllama(prompt, schema, image) {
   const res = await fetch(settings.ollamaUrl.replace(/\/$/, '') + '/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: settings.ollamaModel,
       stream: false,
-      format: schema,
+      // Ollama verwacht standaard JSON-schema (kleine letters voor de types).
+      format: JSON.parse(JSON.stringify(schema).toLowerCase()),
       options: { temperature: 0.2 },
       messages: [{ role: 'user', content: prompt, ...(image ? { images: [image.data] } : {}) }],
     }),
@@ -427,6 +443,137 @@ async function analyzeOllama(prompt, image) {
   const data = await res.json();
   return JSON.parse(data.message?.content || '{}');
 }
+
+// ---------- Advies ----------
+
+const ADVICE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    rating: { type: 'STRING' },
+    summary: { type: 'STRING' },
+    positives: { type: 'ARRAY', items: { type: 'STRING' } },
+    tips: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { instead_of: { type: 'STRING' }, try: { type: 'STRING' }, why: { type: 'STRING' } },
+        required: ['instead_of', 'try', 'why'],
+      },
+    },
+  },
+  required: ['rating', 'summary', 'tips'],
+};
+const RATINGS = { goed: 'Goed', redelijk: 'Redelijk', 'kan beter': 'Kan beter' };
+
+function advicePrompt(subject, items, extra = '') {
+  const t = sumItems(items);
+  const lines = items.map((it) => {
+    const it_t = itemTotals(it);
+    return `- ${it.name}, ${round(it.grams)} g: ${round(it_t.kcal)} kcal, eiwit ${round(it_t.protein)} g, `
+      + `koolhydraten ${round(it_t.carbs)} g, vet ${round(it_t.fat)} g, vezels ${round(it_t.fiber)} g`
+      + (it.nutriscore ? `, Nutri-Score ${it.nutriscore.toUpperCase()}` : '');
+  }).join('\n');
+  const goals = `Dagdoel: ${settings.goalKcal} kcal` + (settings.goalProtein ? `, ${settings.goalProtein} g eiwit` : '') + '.';
+  return `Je bent een vriendelijke, praktische voedingscoach die werkt volgens de Schijf van Vijf van het Voedingscentrum.
+Beoordeel ${subject}. ${goals} ${extra}
+
+Gegeten:
+${lines}
+Totaal: ${round(t.kcal)} kcal, eiwit ${round(t.protein)} g, koolhydraten ${round(t.carbs)} g, vet ${round(t.fat)} g, vezels ${round(t.fiber)} g.
+
+Geef:
+- rating: precies één van "goed", "redelijk" of "kan beter"
+- summary: één of twee korte zinnen met je oordeel
+- positives: maximaal 2 korte punten die goed zijn
+- tips: 1 tot 3 concrete verbeteringen. "instead_of" is wat er nu gegeten wordt, "try" is een concreet alternatief
+  met hoeveelheid dat in een Nederlandse supermarkt te koop is (bijv. "2 sneetjes volkorenbrood"),
+  "why" zegt in een paar woorden wat het oplevert (bijv. meer vezels, minder verzadigd vet, minder suiker, langer verzadigd).
+Regels: wees positief en motiverend, nooit veroordelend. Raad nooit maaltijden overslaan, crashdiëten of extreem
+weinig eten aan. Is het al goed, geef dan hooguit één kleine tip. Geef geen medisch advies. Schrijf in het Nederlands.`;
+}
+
+async function getAdvice(subject, items, extra) {
+  const a = await askAI(advicePrompt(subject, items, extra), ADVICE_SCHEMA);
+  const rating = String(a.rating || '').toLowerCase().trim();
+  return {
+    rating: RATINGS[rating] ? rating : 'redelijk',
+    summary: String(a.summary || ''),
+    positives: (a.positives || []).slice(0, 2).map(String),
+    tips: (a.tips || []).filter((t) => t && t.try).slice(0, 3),
+    sig: itemsSig(items),
+  };
+}
+
+// Handtekening van de items, zodat we zien of opgeslagen advies nog bij de maaltijd past.
+const itemsSig = (items) => items.map((it) => `${it.name.trim()}|${round(it.grams)}`).join(';');
+const ratingClass = (r) => 'rating-' + r.replace(' ', '-');
+
+function adviceHTML(a) {
+  return `<div class="card advice ${ratingClass(a.rating)}">
+    <div class="advice-head"><span class="rating">${RATINGS[a.rating]}</span><span>${esc(a.summary)}</span></div>
+    ${a.positives.length ? `<ul class="positives">${a.positives.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+    ${a.tips.map((t) => `<div class="tip">
+      <div><span class="muted">In plaats van</span> ${esc(t.instead_of)}</div>
+      <div class="tip-try">→ ${esc(t.try)}</div>
+      <div class="muted small">${esc(t.why)}</div>
+    </div>`).join('')}
+    <p class="muted small">Algemeen advies op basis van de Schijf van Vijf, geen vervanging van een diëtist.</p>
+  </div>`;
+}
+
+async function runAdvice(btn, statusId, fetchAdvice) {
+  btn.disabled = true;
+  setStatus(statusId, 'Advies ophalen…', 'busy');
+  try {
+    await fetchAdvice();
+    setStatus(statusId, '');
+  } catch (err) {
+    setStatus(statusId, err.message === 'Failed to fetch' ? 'Geen verbinding.' : err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderReviewAdvice() {
+  const d = state.draft;
+  const fresh = d.advice && d.advice.sig === itemsSig(d.items);
+  $('#review-advice').innerHTML = fresh ? adviceHTML(d.advice) : '';
+  $('#review-advise').textContent = fresh ? 'Advies vernieuwen' : 'Advies over deze maaltijd';
+  $('#review-advise').disabled = d.items.length === 0;
+}
+
+$('#review-advise').onclick = () => runAdvice($('#review-advise'), '#review-advice-status', async () => {
+  const d = state.draft;
+  d.advice = await getAdvice(`deze maaltijd (${d.meal.toLowerCase()})`, d.items);
+  renderReviewAdvice();
+});
+
+let dayAdvice = load('eetmeter.dayAdvice', {}); // { 'YYYY-MM-DD': advies }
+
+function dayItems(date) {
+  // Maaltijd in de naam, zodat het advies weet wat bij ontbijt, lunch enz. hoort.
+  return (log[date] || []).flatMap((e) => e.items.map((it) => ({ ...it, name: `${e.meal}: ${it.name}` })));
+}
+
+function renderDayAdvice() {
+  const items = dayItems(state.date);
+  const a = dayAdvice[state.date];
+  const fresh = a && a.sig === itemsSig(items);
+  $('#day-advice').innerHTML = fresh ? adviceHTML(a) : '';
+  $('#day-advise').hidden = items.length === 0;
+  $('#day-advise').textContent = fresh ? 'Advies vernieuwen' : 'Advies over deze dag';
+}
+
+$('#day-advise').onclick = () => runAdvice($('#day-advise'), '#day-advice-status', async () => {
+  const isToday = state.date === todayKey();
+  const extra = isToday
+    ? `Het is nu ${new Date().toTimeString().slice(0, 5)}, er kunnen vandaag nog maaltijden volgen. `
+      + 'Geef als dat past ook een tip voor de volgende maaltijd, rekening houdend met wat er nog over is van het dagdoel.'
+    : 'Dit is een afgelopen dag; geef tips voor een volgende keer.';
+  dayAdvice[state.date] = await getAdvice(isToday ? 'wat er vandaag tot nu toe gegeten is' : 'wat er deze dag gegeten is', dayItems(state.date), extra);
+  save('eetmeter.dayAdvice', dayAdvice);
+  renderDayAdvice();
+});
 
 // Foto verkleinen zodat hij snel verstuurd wordt (en minder van je gratis limiet kost).
 function resizeImage(file, max = 1024) {
@@ -506,7 +653,7 @@ $('#describe-analyze').onclick = async () => {
 
 // ---------- Open Food Facts: barcode en zoeken ----------
 
-const OFF_FIELDS = 'code,product_name,product_name_nl,brands,nutriments,serving_quantity';
+const OFF_FIELDS = 'code,product_name,product_name_nl,brands,nutriments,serving_quantity,nutriscore_grade';
 
 function offToItem(p) {
   const n = p.nutriments || {};
@@ -518,6 +665,7 @@ function offToItem(p) {
     name: brand && !name.toLowerCase().includes(brand.toLowerCase()) ? `${name} (${brand})` : name,
     grams: num(p.serving_quantity) || 100,
     per100: { kcal, protein: n.proteins_100g, carbs: n.carbohydrates_100g, fat: n.fat_100g, fiber: n.fiber_100g },
+    nutriscore: p.nutriscore_grade,
   });
 }
 const hasNutrition = (p) => p.nutriments && (p.nutriments['energy-kcal_100g'] != null || p.nutriments.energy_100g != null);
@@ -624,7 +772,7 @@ $('#search-form').onsubmit = async (e) => {
     setStatus('#search-status', searchResults.length ? '' : 'Niets gevonden. Probeer een andere zoekterm of "Beschrijven".');
     $('#search-results').innerHTML = searchResults.map((it, i) => `
       <div class="card result" data-r="${i}">
-        <span>${esc(it.name)}</span>
+        <span>${nutriBadge(it)}${esc(it.name)}</span>
         <span class="num">${round(it.per100.kcal)} kcal/100 g</span>
       </div>`).join('');
   } catch (err) {
