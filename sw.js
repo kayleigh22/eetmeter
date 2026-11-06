@@ -1,6 +1,6 @@
 // Houdt de app-bestanden bij zodat Eetmeter ook zonder bereik opent.
 // Eerst het netwerk (zodat updates direct binnenkomen), anders de opgeslagen versie.
-const CACHE = 'eetmeter-v3';
+const CACHE = 'eetmeter-v4';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -19,8 +19,11 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   const cacheable = e.request.method === 'GET' && (url.origin === location.origin || url.hostname === 'unpkg.com');
   if (!cacheable) return; // API-verzoeken (Gemini, Open Food Facts) nooit cachen
+  // 'no-cache': altijd bij de server navragen of er een nieuwere versie is,
+  // anders blijft de browser tot 10 minuten de oude bestanden van GitHub Pages gebruiken.
+  const own = url.origin === location.origin;
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, own ? { cache: 'no-cache' } : {})
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
