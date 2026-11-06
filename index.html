@@ -24,6 +24,10 @@
   <main>
     <!-- Vandaag -->
     <section class="view" id="view-today">
+      <label class="profile-bar">
+        <span class="muted small">Profiel</span>
+        <select id="profile-switch" aria-label="Profiel kiezen"></select>
+      </label>
       <div class="card totals">
         <div class="kcal-line">
           <span class="kcal-big" id="tot-kcal">0</span>
@@ -141,9 +145,77 @@
       <button class="btn danger wide" id="review-delete" hidden>Maaltijd verwijderen</button>
     </section>
 
+    <!-- Profiel / vragenlijst -->
+    <section class="view" id="view-profile" hidden>
+      <p class="muted" id="profile-intro"></p>
+      <form id="profile-form" class="form-stack" novalidate>
+        <label class="field">Naam<input id="pf-name" maxlength="30" autocomplete="off" placeholder="bijv. Kayleigh"></label>
+
+        <fieldset class="field">
+          <legend>Geslacht <span class="small">(voor de berekening)</span></legend>
+          <div class="seg">
+            <label><input type="radio" name="sex" value="v"><span>Vrouw</span></label>
+            <label><input type="radio" name="sex" value="m"><span>Man</span></label>
+            <label><input type="radio" name="sex" value="x"><span>Zeg ik liever niet</span></label>
+          </div>
+        </fieldset>
+
+        <div class="row">
+          <label class="field">Leeftijd<input id="pf-age" type="number" inputmode="numeric" min="12" max="110"></label>
+          <label class="field">Lengte (cm)<input id="pf-height" type="number" inputmode="numeric" min="100" max="250"></label>
+        </div>
+        <label class="field">Huidig gewicht (kg)<input id="pf-weight" type="text" inputmode="decimal" placeholder="bijv. 72,5"></label>
+
+        <fieldset class="field">
+          <legend>Wat is je doel?</legend>
+          <div class="seg">
+            <label><input type="radio" name="goal" value="af"><span>Afvallen</span></label>
+            <label><input type="radio" name="goal" value="gelijk"><span>Op gewicht blijven</span></label>
+            <label><input type="radio" name="goal" value="aan"><span>Aankomen</span></label>
+          </div>
+        </fieldset>
+
+        <div class="form-stack" id="pf-target-wrap" hidden>
+          <label class="field">Streefgewicht (kg)<input id="pf-target" type="text" inputmode="decimal"></label>
+          <fieldset class="field">
+            <legend>Hoe snel?</legend>
+            <div class="seg">
+              <label><input type="radio" name="pace" value="0.25"><span>Rustig<br><small>¼ kg per week</small></span></label>
+              <label><input type="radio" name="pace" value="0.5"><span>Gemiddeld<br><small>½ kg per week</small></span></label>
+            </div>
+          </fieldset>
+        </div>
+
+        <label class="field">Hoe actief ben je?
+          <select id="pf-activity">
+            <option value="" disabled selected>Kies…</option>
+            <option value="0">Weinig actief: zittend werk, (bijna) niet sporten</option>
+            <option value="1">Licht actief: 1–3× per week sporten of veel wandelen</option>
+            <option value="2">Gemiddeld actief: 3–5× per week sporten</option>
+            <option value="3">Erg actief: 6–7× per week sporten of zwaar werk</option>
+            <option value="4">Zeer actief: zwaar werk én veel sporten</option>
+          </select>
+        </label>
+
+        <div id="pf-result"></div>
+
+        <div class="row">
+          <button type="button" class="btn secondary wide" id="pf-cancel">Annuleren</button>
+          <button type="submit" class="btn wide" id="pf-save">Opslaan</button>
+        </div>
+        <button type="button" class="btn danger wide" id="pf-delete" hidden>Profiel verwijderen</button>
+      </form>
+    </section>
+
     <!-- Instellingen -->
     <section class="view" id="view-settings" hidden>
-      <h2 class="section-title">Doelen</h2>
+      <h2 class="section-title">Profiel</h2>
+      <div class="card" id="profile-summary"></div>
+      <div class="row">
+        <button class="btn secondary wide" id="edit-profile">Vragenlijst aanpassen</button>
+        <button class="btn secondary wide" id="new-profile">＋ Nieuw profiel</button>
+      </div>
+      <p class="muted small">Dagdoel (berekend uit de vragenlijst, zelf aan te passen):</p>
       <div class="row">
         <label class="field">kcal per dag<input type="number" id="set-goal-kcal" min="0"></label>
         <label class="field">eiwit (g)<input type="number" id="set-goal-protein" min="0"></label>

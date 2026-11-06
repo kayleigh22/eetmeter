@@ -149,6 +149,28 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .per100 input { padding: 6px; font-size: 16px; }
 .review-total b { font-size: 1.5rem; }
 
+/* Profielen en vragenlijst */
+.profile-bar { display: flex; align-items: center; gap: 10px; }
+.profile-bar select { flex: 1; font-weight: 600; padding: 8px 12px; }
+.form-stack { display: flex; flex-direction: column; gap: 14px; }
+fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
+fieldset.field legend { padding: 0; margin-bottom: 4px; }
+.seg { display: flex; gap: 8px; }
+.seg label { flex: 1; min-width: 0; }
+.seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.seg span {
+  display: flex; flex-direction: column; justify-content: center; text-align: center; height: 100%;
+  border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 10px;
+  padding: 10px 6px; font-size: .9rem; line-height: 1.25; cursor: pointer;
+}
+.seg small { color: var(--muted); font-size: .75rem; }
+.seg input:checked + span { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); }
+.calc { display: flex; flex-direction: column; gap: 6px; }
+.calc ul { margin: 6px 0 0; padding-left: 18px; font-size: .92rem; display: flex; flex-direction: column; gap: 4px; }
+.calc p { margin: 0; }
+.warn { background: color-mix(in srgb, var(--over) 15%, transparent); border-radius: 8px; padding: 8px 10px; font-size: .9rem; }
+
 /* Nutri-Score (officiële kleuren) */
 .ns {
   display: inline-block; min-width: 1.4em; margin-right: 6px; padding: 0 4px; border-radius: 4px;

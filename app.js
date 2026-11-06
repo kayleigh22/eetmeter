@@ -11,8 +11,6 @@ const MEALS = ['Ontbijt', 'Lunch', 'Diner', 'Tussendoor'];
 const GEMINI_FALLBACKS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash'];
 
 const DEFAULT_SETTINGS = {
-  goalKcal: 2000,
-  goalProtein: 0,
   provider: 'gemini',
   geminiKey: '',
   geminiModel: 'gemini-3.6-flash',
@@ -36,8 +34,48 @@ function save(key, value) {
   }
 }
 
+// Gedeeld door alle profielen: welke AI-dienst en API-key.
 let settings = { ...DEFAULT_SETTINGS, ...load('eetmeter.settings', {}) };
-let log = load('eetmeter.log', {}); // { 'YYYY-MM-DD': [ { id, meal, time, items: [...] } ] }
+
+// Ieder profiel heeft eigen antwoorden, doelen, daglog en advies.
+let profiles; // { active, list: [ { id, name, answers, goalKcal, goalProtein } ] }
+let log = {}; // { 'YYYY-MM-DD': [ { id, meal, time, items: [...], advice } ] }
+let dayAdvice = {}; // { 'YYYY-MM-DD': advies }
+
+const profile = () => profiles.list.find((p) => p.id === profiles.active);
+const logKey = () => `eetmeter.log.${profiles.active}`;
+const adviceKey = () => `eetmeter.dayAdvice.${profiles.active}`;
+
+function initProfiles() {
+  profiles = load('eetmeter.profiles', null);
+  if (!profiles?.list?.length) {
+    // Eerste keer met profielen: gegevens van vóór de profielen naar een eerste profiel verhuizen.
+    // De oude sleutels blijven staan als reservekopie.
+    const id = uid();
+    const oldLog = load('eetmeter.log', null);
+    profiles = {
+      active: id,
+      list: [{ id, name: oldLog ? 'Mijn profiel' : '', answers: null, goalKcal: settings.goalKcal || 2000, goalProtein: settings.goalProtein || 0 }],
+    };
+    if (oldLog) {
+      save(`eetmeter.log.${id}`, oldLog);
+      save(`eetmeter.dayAdvice.${id}`, load('eetmeter.dayAdvice', {}));
+    }
+    save('eetmeter.profiles', profiles);
+  }
+  if (!profile()) profiles.active = profiles.list[0].id;
+  loadProfileData();
+}
+function loadProfileData() {
+  log = load(logKey(), {});
+  dayAdvice = load(adviceKey(), {});
+}
+function switchProfile(id) {
+  profiles.active = id;
+  save('eetmeter.profiles', profiles);
+  state.draft = null;
+  loadProfileData();
+}
 
 const state = {
   date: todayKey(),
@@ -122,12 +160,13 @@ function show(view) {
   if (state.view === 'barcode' && view !== 'barcode') stopScanner();
   state.view = view;
   $$('.view').forEach((v) => (v.hidden = v.id !== 'view-' + view));
-  const tab = ['add', 'photo', 'describe', 'barcode', 'search', 'review'].includes(view) ? 'add' : view;
+  const tab = ['add', 'photo', 'describe', 'barcode', 'search', 'review'].includes(view) ? 'add'
+    : view === 'profile' ? 'settings' : view;
   $$('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.go === tab));
 
   const titles = {
     add: 'Toevoegen', photo: 'Foto', describe: 'Beschrijven', barcode: 'Barcode',
-    search: 'Zoeken', review: 'Controleren', settings: 'Instellingen',
+    search: 'Zoeken', review: 'Controleren', settings: 'Instellingen', profile: 'Profiel',
   };
   const isDayView = view === 'today';
   $('#day-label').textContent = isDayView ? dateLabel(state.date) : titles[view];
@@ -156,13 +195,14 @@ function renderToday() {
   const t = sumItems(all);
 
   $('#tot-kcal').textContent = round(t.kcal);
-  $('#goal-kcal').textContent = settings.goalKcal;
+  $('#goal-kcal').textContent = profile().goalKcal;
   for (const k of ['protein', 'carbs', 'fat', 'fiber']) $('#tot-' + k).textContent = round(t[k]);
-  if (settings.goalProtein) $('#tot-protein').textContent = `${round(t.protein)}/${settings.goalProtein}`;
-  const pct = settings.goalKcal ? (t.kcal / settings.goalKcal) * 100 : 0;
+  if (profile().goalProtein) $('#tot-protein').textContent = `${round(t.protein)}/${profile().goalProtein}`;
+  const pct = profile().goalKcal ? (t.kcal / profile().goalKcal) * 100 : 0;
   $('#kcal-bar').style.width = Math.min(pct, 100) + '%';
   $('#kcal-bar').classList.toggle('over', pct > 100);
   $('#day-next').disabled = state.date >= todayKey();
+  renderProfileSwitch();
 
   const sorted = [...entries].sort((a, b) => MEALS.indexOf(a.meal) - MEALS.indexOf(b.meal) || a.time.localeCompare(b.time));
   $('#meals').innerHTML = sorted.map((e) => {
@@ -319,7 +359,7 @@ $('#review-save').onclick = () => {
     const time = new Date().toTimeString().slice(0, 5);
     day.push({ id: uid(), meal: d.meal, time, items, advice });
   }
-  save('eetmeter.log', log);
+  save(logKey(), log);
   state.draft = null;
   toast('Opgeslagen');
   show('today');
@@ -328,7 +368,7 @@ $('#review-delete').onclick = () => {
   if (!confirm('Deze maaltijd verwijderen?')) return;
   log[state.date] = (log[state.date] || []).filter((x) => x.id !== state.draft.entryId);
   if (!log[state.date].length) delete log[state.date];
-  save('eetmeter.log', log);
+  save(logKey(), log);
   state.draft = null;
   show('today');
 };
@@ -473,7 +513,8 @@ function advicePrompt(subject, items, extra = '') {
       + `koolhydraten ${round(it_t.carbs)} g, vet ${round(it_t.fat)} g, vezels ${round(it_t.fiber)} g`
       + (it.nutriscore ? `, Nutri-Score ${it.nutriscore.toUpperCase()}` : '');
   }).join('\n');
-  const goals = `Dagdoel: ${settings.goalKcal} kcal` + (settings.goalProtein ? `, ${settings.goalProtein} g eiwit` : '') + '.';
+  const goals = `Dagdoel: ${profile().goalKcal} kcal` + (profile().goalProtein ? `, ${profile().goalProtein} g eiwit` : '') + '.'
+    + (profile().answers ? ` ${goalDescription(profile().answers)}` : '');
   return `Je bent een vriendelijke, praktische voedingscoach die werkt volgens de Schijf van Vijf van het Voedingscentrum.
 Beoordeel ${subject}. ${goals} ${extra}
 
@@ -548,7 +589,6 @@ $('#review-advise').onclick = () => runAdvice($('#review-advise'), '#review-advi
   renderReviewAdvice();
 });
 
-let dayAdvice = load('eetmeter.dayAdvice', {}); // { 'YYYY-MM-DD': advies }
 
 function dayItems(date) {
   // Maaltijd in de naam, zodat het advies weet wat bij ontbijt, lunch enz. hoort.
@@ -571,7 +611,7 @@ $('#day-advise').onclick = () => runAdvice($('#day-advise'), '#day-advice-status
       + 'Geef als dat past ook een tip voor de volgende maaltijd, rekening houdend met wat er nog over is van het dagdoel.'
     : 'Dit is een afgelopen dag; geef tips voor een volgende keer.';
   dayAdvice[state.date] = await getAdvice(isToday ? 'wat er vandaag tot nu toe gegeten is' : 'wat er deze dag gegeten is', dayItems(state.date), extra);
-  save('eetmeter.dayAdvice', dayAdvice);
+  save(adviceKey(), dayAdvice);
   renderDayAdvice();
 });
 
@@ -784,11 +824,222 @@ $('#search-results').onclick = (e) => {
   if (r) addToDraft([makeItem(searchResults[Number(r.dataset.r)])]);
 };
 
+// ---------- Profielen en vragenlijst ----------
+
+const ACTIVITY = [
+  [1.2, 'Weinig actief', 'zittend werk, (bijna) niet sporten'],
+  [1.375, 'Licht actief', '1–3× per week sporten of veel wandelen'],
+  [1.55, 'Gemiddeld actief', '3–5× per week sporten'],
+  [1.725, 'Erg actief', '6–7× per week sporten of lichamelijk zwaar werk'],
+  [1.9, 'Zeer actief', 'zwaar lichamelijk werk én veel sporten'],
+];
+const GOALS = { af: 'Afvallen', gelijk: 'Op gewicht blijven', aan: 'Aankomen' };
+const KCAL_PER_KG = 7700; // ongeveer, voor 1 kg lichaamsgewicht
+const MIN_KCAL = { v: 1200, m: 1500, x: 1350 }; // ondergrens bij afvallen zonder begeleiding
+const displayName = (p) => p.name || 'Mijn profiel';
+const kg = (n) => (Math.round(n * 10) / 10).toLocaleString('nl-NL');
+
+// Schatting van het dagelijks verbruik (Mifflin-St Jeor) en het advies dat daaruit volgt.
+function calculate(a) {
+  const h = a.height / 100;
+  const bmr = 10 * a.weight + 6.25 * a.height - 5 * a.age + { m: 5, v: -161, x: -78 }[a.sex];
+  const tdee = bmr * ACTIVITY[a.activity][0];
+  const bmi = a.weight / (h * h);
+  const target = a.goal === 'gelijk' ? a.weight : a.target;
+  const targetBmi = target / (h * h);
+  const blocks = []; // maakt opslaan onmogelijk
+  const warnings = [];
+
+  if (a.goal === 'af' && target >= a.weight) blocks.push('Je streefgewicht moet lager zijn dan je huidige gewicht.');
+  if (a.goal === 'aan' && target <= a.weight) blocks.push('Je streefgewicht moet hoger zijn dan je huidige gewicht.');
+  if (a.goal === 'af' && bmi < 18.5) {
+    blocks.push('Je gewicht is al aan de lage kant (BMI onder 18,5). Afvallen raden we niet aan; overleg met je huisarts of een diëtist.');
+  } else if (a.goal === 'af' && targetBmi < 18.5) {
+    blocks.push(`Dit streefgewicht ligt onder een gezond gewicht. Bij jouw lengte is dat minimaal ${kg(18.5 * h * h)} kg.`);
+  }
+  if (a.goal === 'aan' && targetBmi > 25) warnings.push('Je streefgewicht ligt boven een gezond gewicht (BMI boven 25).');
+  if (a.age < 18) warnings.push('Deze berekening is bedoeld voor volwassenen. Ben je jonger dan 18, overleg dan met je huisarts of een diëtist.');
+
+  const perDay = (a.pace * KCAL_PER_KG) / 7;
+  let kcal = tdee;
+  if (a.goal === 'af') {
+    kcal = tdee - Math.min(perDay, tdee * 0.25); // nooit meer dan 25% onder je verbruik
+    if (kcal < MIN_KCAL[a.sex]) {
+      kcal = MIN_KCAL[a.sex];
+      warnings.push(`We adviseren niet minder dan ${MIN_KCAL[a.sex]} kcal per dag te eten. Het afvallen gaat daardoor wat langzamer.`);
+    }
+  } else if (a.goal === 'aan') {
+    kcal = tdee + perDay;
+  }
+  const diff = Math.abs(kcal - tdee);
+  const weeks = a.goal !== 'gelijk' && diff > 0 ? (Math.abs(target - a.weight) * KCAL_PER_KG) / (diff * 7) : 0;
+  // Eiwit per kg "gezond" gewicht (hooguit BMI 25), iets meer bij afvallen of aankomen.
+  const protein = Math.min(a.weight, 25 * h * h) * { af: 1.2, gelijk: 0.9, aan: 1.4 }[a.goal];
+
+  return {
+    bmr, tdee, bmi, targetBmi, weeks, blocks, warnings, diff,
+    kcal: Math.round(kcal / 10) * 10,
+    protein: Math.round(protein / 5) * 5,
+  };
+}
+
+function goalDescription(a) {
+  const activity = ACTIVITY[a.activity][1].toLowerCase();
+  if (a.goal === 'gelijk') return `Doel: op gewicht blijven (${kg(a.weight)} kg), ${activity}.`;
+  return `Doel: ${a.goal === 'af' ? 'afvallen' : 'aankomen'} van ${kg(a.weight)} naar ${kg(a.target)} kg, ${activity}.`;
+}
+
+function renderProfileSwitch() {
+  $('#profile-switch').innerHTML = profiles.list
+    .map((p) => `<option value="${p.id}" ${p.id === profiles.active ? 'selected' : ''}>${esc(displayName(p))}</option>`)
+    .join('') + '<option value="__new">＋ Nieuw profiel</option>';
+}
+$('#profile-switch').onchange = (e) => {
+  if (e.target.value === '__new') return openProfileForm(null);
+  switchProfile(e.target.value);
+  show('today');
+};
+
+function openProfileForm(id) {
+  state.profileEdit = { id };
+  const p = id ? profiles.list.find((x) => x.id === id) : null;
+  const a = p?.answers || {};
+  const f = $('#profile-form');
+  f.reset();
+  $('#pf-name').value = p?.name || '';
+  f.sex.value = a.sex || '';
+  $('#pf-age').value = a.age || '';
+  $('#pf-height').value = a.height || '';
+  $('#pf-weight').value = a.weight ? kg(a.weight) : '';
+  f.goal.value = a.goal || '';
+  $('#pf-target').value = a.target ? kg(a.target) : '';
+  f.pace.value = String(a.pace || 0.5);
+  $('#pf-activity').value = a.activity ?? '';
+  $('#pf-delete').hidden = !id || profiles.list.length < 2;
+  const first = profiles.list.length === 1 && id && !p.answers && !p.skipped;
+  $('#profile-intro').innerHTML = first
+    ? '<b>Welkom!</b> Beantwoord een paar vragen, dan berekenen we hoeveel je ongeveer per dag kunt eten.'
+    : 'Beantwoord de vragen, dan berekenen we hoeveel je ongeveer per dag kunt eten.';
+  $('#pf-cancel').textContent = first ? 'Later invullen' : 'Annuleren';
+  show('profile');
+  updateProfileForm();
+}
+
+function readProfileForm() {
+  const f = $('#profile-form');
+  const a = {
+    sex: f.sex.value,
+    age: round(num($('#pf-age').value)),
+    height: round(num($('#pf-height').value)),
+    weight: num($('#pf-weight').value),
+    goal: f.goal.value,
+    target: num($('#pf-target').value),
+    pace: Number(f.pace.value) || 0.5,
+    activity: $('#pf-activity').value === '' ? null : Number($('#pf-activity').value),
+  };
+  const complete = a.sex && a.age >= 12 && a.age <= 110 && a.height >= 100 && a.height <= 250
+    && a.weight >= 30 && a.weight <= 350 && a.goal && a.activity !== null
+    && (a.goal === 'gelijk' || (a.target >= 30 && a.target <= 350));
+  return { a, complete };
+}
+
+function updateProfileForm() {
+  const { a, complete } = readProfileForm();
+  $('#pf-target-wrap').hidden = !a.goal || a.goal === 'gelijk';
+  const out = $('#pf-result');
+  if (!complete) {
+    out.innerHTML = '<p class="muted small">Vul alles in om je advies te zien.</p>';
+    $('#pf-save').disabled = true;
+    return;
+  }
+  const c = calculate(a);
+  const when = new Date(Date.now() + c.weeks * 7 * 864e5).toLocaleDateString('nl-NL', { month: 'long', year: 'numeric' });
+  const bmi = (n) => n.toLocaleString('nl-NL', { maximumFractionDigits: 1 });
+  const lines = [
+    `In rust verbruik je ongeveer <b>${round(c.bmr)} kcal</b> per dag.`,
+    `Met je activiteit kom je op ongeveer <b>${round(c.tdee)} kcal</b> per dag.`,
+  ];
+  if (a.goal !== 'gelijk') {
+    lines.push(`Om ${a.goal === 'af' ? 'af te vallen' : 'aan te komen'} eet je zo'n <b>${round(c.diff)} kcal ${a.goal === 'af' ? 'minder' : 'meer'}</b> per dag.`);
+    lines.push(`BMI nu ${bmi(c.bmi)}, bij je streefgewicht ${bmi(c.targetBmi)}.`);
+    if (!c.blocks.length) lines.push(`Je streefgewicht bereik je in ongeveer <b>${Math.ceil(c.weeks)} weken</b> (rond ${when}).`);
+  } else {
+    lines.push(`BMI nu ${bmi(c.bmi)}.`);
+  }
+  out.innerHTML = `<div class="card calc">
+    ${c.blocks.length ? '' : `<div class="muted small">Advies per dag</div>
+      <div><span class="kcal-big">${c.kcal.toLocaleString('nl-NL')}</span> kcal</div>
+      <div>en ongeveer <b>${c.protein} g eiwit</b></div>`}
+    <ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
+    ${[...c.blocks, ...c.warnings].map((w) => `<p class="warn">${esc(w)}</p>`).join('')}
+    <p class="muted small">Een schatting met de Mifflin-St Jeor-formule; je echte verbruik kan zo'n 10% afwijken.
+      Kijk na een paar weken hoe je gewicht verandert en vul de vragen dan opnieuw in.
+      Ben je zwanger, geef je borstvoeding of heb je een medische aandoening? Overleg dan met je huisarts of een diëtist.</p>
+  </div>`;
+  $('#pf-save').disabled = c.blocks.length > 0;
+}
+
+$('#profile-form').addEventListener('input', updateProfileForm);
+$('#profile-form').addEventListener('change', updateProfileForm);
+
+$('#profile-form').onsubmit = (e) => {
+  e.preventDefault();
+  const { a, complete } = readProfileForm();
+  if (!complete) return;
+  const c = calculate(a);
+  if (c.blocks.length) return;
+  if (a.goal === 'gelijk') a.target = a.weight;
+  const name = $('#pf-name').value.trim();
+  let p = state.profileEdit.id && profiles.list.find((x) => x.id === state.profileEdit.id);
+  if (!p) {
+    p = { id: uid() };
+    profiles.list.push(p);
+  }
+  Object.assign(p, { name, answers: a, goalKcal: c.kcal, goalProtein: c.protein, skipped: false });
+  save('eetmeter.profiles', profiles);
+  if (p.id !== profiles.active) switchProfile(p.id);
+  state.profileEdit = null;
+  toast(`Dagdoel: ${c.kcal} kcal`);
+  show(settings.geminiKey || settings.provider === 'ollama' ? 'today' : 'settings');
+};
+
+$('#pf-cancel').onclick = () => {
+  const p = state.profileEdit?.id && profiles.list.find((x) => x.id === state.profileEdit.id);
+  if (p && !p.answers) {
+    p.skipped = true; // niet bij elke start opnieuw vragen
+    save('eetmeter.profiles', profiles);
+  }
+  state.profileEdit = null;
+  show('today');
+};
+
+$('#pf-delete').onclick = () => {
+  const id = state.profileEdit.id;
+  const p = profiles.list.find((x) => x.id === id);
+  if (!p || profiles.list.length < 2) return;
+  if (!confirm(`Profiel "${displayName(p)}" met alle maaltijden verwijderen? Dit kan niet ongedaan worden.`)) return;
+  profiles.list = profiles.list.filter((x) => x.id !== id);
+  try {
+    localStorage.removeItem(`eetmeter.log.${id}`);
+    localStorage.removeItem(`eetmeter.dayAdvice.${id}`);
+  } catch { /* niets */ }
+  switchProfile(profiles.list[0].id);
+  state.profileEdit = null;
+  show('today');
+};
+
+$('#edit-profile').onclick = () => openProfileForm(profiles.active);
+$('#new-profile').onclick = () => openProfileForm(null);
+
 // ---------- Instellingen ----------
 
 function renderSettings() {
-  $('#set-goal-kcal').value = settings.goalKcal;
-  $('#set-goal-protein').value = settings.goalProtein || '';
+  const p = profile();
+  $('#profile-summary').innerHTML = `<b>${esc(displayName(p))}</b><div class="muted small">${
+    p.answers ? esc(goalDescription(p.answers)) : 'Vragenlijst nog niet ingevuld.'}</div>`;
+  $('#edit-profile').textContent = p.answers ? 'Vragenlijst aanpassen' : 'Vragenlijst invullen';
+  $('#set-goal-kcal').value = p.goalKcal;
+  $('#set-goal-protein').value = p.goalProtein || '';
   $('#set-provider').value = settings.provider;
   $('#set-gemini-key').value = settings.geminiKey;
   $('#set-gemini-model').value = settings.geminiModel;
@@ -800,9 +1051,20 @@ function renderSettings() {
 }
 
 $('#view-settings').addEventListener('change', (e) => {
-  const map = {
+  // Doelen horen bij het profiel; zelf aanpassen overschrijft de berekening.
+  const goals = {
     'set-goal-kcal': ['goalKcal', (v) => round(num(v)) || 2000],
     'set-goal-protein': ['goalProtein', (v) => round(num(v))],
+  };
+  if (goals[e.target.id]) {
+    const [key, parse] = goals[e.target.id];
+    profile()[key] = parse(e.target.value);
+    save('eetmeter.profiles', profiles);
+    renderSettings();
+    toast('Doel aangepast');
+    return;
+  }
+  const map = {
     'set-provider': ['provider', String],
     'set-gemini-key': ['geminiKey', (v) => v.trim()],
     'set-gemini-model': ['geminiModel', (v) => v.trim() || DEFAULT_SETTINGS.geminiModel],
@@ -829,10 +1091,12 @@ $('#test-ai').onclick = async () => {
 };
 
 $('#export').onclick = () => {
-  const blob = new Blob([JSON.stringify({ version: 1, log, settings: { ...settings, geminiKey: '' } }, null, 2)], { type: 'application/json' });
+  // Back-up van het actieve profiel; de API-key gaat nooit mee.
+  const blob = new Blob([JSON.stringify({ version: 2, profile: profile(), log, dayAdvice }, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `eetmeter-backup-${todayKey()}.json`;
+  const slug = displayName(profile()).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  a.download = `eetmeter-${slug || 'profiel'}-${todayKey()}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
@@ -843,12 +1107,12 @@ $('#import').onchange = async (e) => {
   try {
     const data = JSON.parse(await file.text());
     if (!data.log || typeof data.log !== 'object') throw new Error();
-    if (!confirm('Back-up samenvoegen met je huidige gegevens?')) return;
+    if (!confirm(`Back-up samenvoegen met profiel "${displayName(profile())}"?`)) return;
     for (const [day, entries] of Object.entries(data.log)) {
       const existing = (log[day] ||= []);
       for (const entry of entries) if (!existing.some((x) => x.id === entry.id)) existing.push(entry);
     }
-    save('eetmeter.log', log);
+    save(logKey(), log);
     toast('Back-up geïmporteerd');
   } catch {
     toast('Dit is geen geldige back-up');
@@ -860,7 +1124,9 @@ $('#import').onchange = async (e) => {
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
-show(settings.geminiKey || settings.provider === 'ollama' ? 'today' : 'settings');
+initProfiles();
+if (!profile().answers && !profile().skipped) openProfileForm(profiles.active);
+else show(settings.geminiKey || settings.provider === 'ollama' ? 'today' : 'settings');
 if (!settings.geminiKey && settings.provider === 'gemini') {
   setStatus('#settings-status', 'Welkom! Vul je gratis Gemini API-key in om foto\'s te laten herkennen. Barcode en zoeken werken ook zonder.');
 }
