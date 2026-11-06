@@ -1,6 +1,6 @@
 // Houdt de app-bestanden bij zodat Eetmeter ook zonder bereik opent.
 // Eerst het netwerk (zodat updates direct binnenkomen), anders de opgeslagen versie.
-const CACHE = 'eetmeter-v4';
+const CACHE = 'eetmeter-v5';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {

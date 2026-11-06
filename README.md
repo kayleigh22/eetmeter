@@ -9,6 +9,12 @@ Een gratis app om je calorieën en voedingswaardes bij te houden. Je hebt geen a
 - **Profielen**: meerdere mensen op één telefoon, ieder met een eigen daglog en doel. Een korte vragenlijst (leeftijd, lengte, gewicht, doel, activiteit) berekent je dagelijkse kcal en eiwit met de Mifflin-St Jeor-formule. Bij afvallen ligt het advies nooit meer dan 25% onder je verbruik en nooit onder 1200 kcal (vrouw) of 1500 kcal (man), en een streefgewicht onder een gezonde BMI (18,5) wordt niet geaccepteerd.
 - **Advies** per maaltijd en per dag, op basis van de Schijf van Vijf. Je krijgt een oordeel (goed / redelijk / kan beter) en concrete alternatieven, zoals "in plaats van wit brood → 2 sneetjes volkorenbrood".
 - **Nutri-Score** (A t/m E) bij gescande producten, als Open Food Facts die kent.
+- **Voortgang**: gewicht bijhouden met grafiek, of je op schema ligt, en een dagdoel dat automatisch meebeweegt met je gewicht. Plus een weekoverzicht met gemiddelden en een grafiek per dag.
+- **Vaste maaltijden**: bewaar een maaltijd (bijv. "Mijn ontbijt") en voeg hem later met één tik toe.
+- **Gewone maten**: vul in als "2 sneetjes" of "1 eetlepel" in plaats van grammen.
+- **Water** bijhouden in glazen.
+- **Wat kan ik nog eten?**: drie maaltijdideeën die passen bij wat je nog over hebt van je dagdoel.
+- **NEVO-tabel**: importeer de officiële Nederlandse voedingsmiddelentabel (CSV of Excel, gratis bij het RIVM) voor exacte waardes van onverpakt eten bij Zoeken. De tabel zelf staat niet in deze repository; je importeert hem op je eigen apparaat.
 
 Alles wat je invoert blijft in de browser op je telefoon; er draait geen server. Het is een webpagina die je als app op je beginscherm zet.
 

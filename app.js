@@ -41,10 +41,12 @@ let settings = { ...DEFAULT_SETTINGS, ...load('eetmeter.settings', {}) };
 let profiles; // { active, list: [ { id, name, answers, goalKcal, goalProtein } ] }
 let log = {}; // { 'YYYY-MM-DD': [ { id, meal, time, items: [...], advice } ] }
 let dayAdvice = {}; // { 'YYYY-MM-DD': advies }
+let water = {}; // { 'YYYY-MM-DD': aantal glazen }
 
 const profile = () => profiles.list.find((p) => p.id === profiles.active);
 const logKey = () => `eetmeter.log.${profiles.active}`;
 const adviceKey = () => `eetmeter.dayAdvice.${profiles.active}`;
+const waterKey = () => `eetmeter.water.${profiles.active}`;
 
 function initProfiles() {
   profiles = load('eetmeter.profiles', null);
@@ -69,11 +71,13 @@ function initProfiles() {
 function loadProfileData() {
   log = load(logKey(), {});
   dayAdvice = load(adviceKey(), {});
+  water = load(waterKey(), {});
 }
 function switchProfile(id) {
   profiles.active = id;
   save('eetmeter.profiles', profiles);
   state.draft = null;
+  state.ideas = null;
   loadProfileData();
 }
 
@@ -115,13 +119,44 @@ const num = (v) => {
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function makeItem({ name, grams, per100, nutriscore }) {
+// unit: de gewone maat die bij dit product hoort (bijv. sneetje van 35 g);
+// measure + amount: de maat waarin het nu is ingevuld (bijv. 2 × sneetje). Zonder measure is het in gram.
+function makeItem({ name, grams, per100, nutriscore, unit, measure, amount, source }) {
   const p = {};
   for (const k of NUTRIENTS) p[k] = num(per100?.[k]);
-  const item = { name: String(name || 'Onbekend'), grams: num(grams) || 100, per100: p };
+  const item = { name: String(name ?? ''), grams: num(grams) || 100, per100: p };
   if (/^[a-e]$/.test(nutriscore || '')) item.nutriscore = nutriscore;
+  if (source) item.source = source;
+  const u = cleanUnit(unit);
+  if (u) item.unit = u;
+  const m = cleanUnit(measure);
+  if (m) {
+    item.measure = m;
+    item.amount = num(amount) || 1;
+    item.grams = item.amount * m.grams;
+  }
   return item;
 }
+function cleanUnit(u) {
+  if (!u || !u.name || /^(g|gr|gram)$/i.test(String(u.name).trim()) || !(num(u.grams) > 0)) return null;
+  return { name: String(u.name).trim(), grams: num(u.grams) };
+}
+
+const GENERIC_UNITS = [
+  { name: 'eetlepel', grams: 15 }, { name: 'theelepel', grams: 5 }, { name: 'opscheplepel', grams: 50 },
+  { name: 'glas', grams: 200 }, { name: 'kopje', grams: 150 }, { name: 'schaaltje', grams: 150 },
+];
+function unitsFor(it) {
+  const list = [{ name: 'gram', grams: 1 }];
+  if (it.unit) list.push(it.unit);
+  if (it.measure && !list.some((u) => u.name === it.measure.name)) list.push(it.measure);
+  for (const g of GENERIC_UNITS) if (!list.some((u) => u.name === g.name)) list.push(g);
+  return list;
+}
+const fmtNum = (n) => (Math.round(n * 100) / 100).toLocaleString('nl-NL');
+const amountLabel = (it) => it.measure
+  ? `${fmtNum(it.amount)} ${it.measure.name} (${round(it.grams)} g)`
+  : `${round(it.grams)} g`;
 // Nutri-Score-label (A t/m E) van Open Food Facts, alleen bij producten met barcode.
 const nutriBadge = (it) => it.nutriscore
   ? `<span class="ns ns-${it.nutriscore}" title="Nutri-Score ${it.nutriscore.toUpperCase()}">${it.nutriscore.toUpperCase()}</span>`
@@ -166,7 +201,7 @@ function show(view) {
 
   const titles = {
     add: 'Toevoegen', photo: 'Foto', describe: 'Beschrijven', barcode: 'Barcode',
-    search: 'Zoeken', review: 'Controleren', settings: 'Instellingen', profile: 'Profiel',
+    search: 'Zoeken', review: 'Controleren', settings: 'Instellingen', profile: 'Profiel', progress: 'Voortgang',
   };
   const isDayView = view === 'today';
   $('#day-label').textContent = isDayView ? dateLabel(state.date) : titles[view];
@@ -177,6 +212,7 @@ function show(view) {
   if (view === 'add') renderAdd();
   if (view === 'review') renderReview();
   if (view === 'settings') renderSettings();
+  if (view === 'progress') renderProgress();
   window.scrollTo(0, 0);
 }
 
@@ -215,12 +251,15 @@ function renderToday() {
       </div>
       ${e.items.map((it) => `<div class="meal-item">
         <span>${nutriBadge(it)}${esc(it.name)}</span>
-        <span class="num">${round(it.grams)} g · ${round(itemTotals(it).kcal)} kcal</span>
+        <span class="num">${amountLabel(it)} · ${round(itemTotals(it).kcal)} kcal</span>
       </div>`).join('')}
     </div>`;
   }).join('');
   $('#today-empty').hidden = entries.length > 0;
   renderDayAdvice();
+  renderWater();
+  $('#ideas-btn').hidden = state.date !== todayKey();
+  renderIdeas();
 }
 
 $('#meals').addEventListener('click', (e) => {
@@ -253,10 +292,11 @@ function recentItems() {
 function renderAdd() {
   $('#draft-banner').hidden = !state.draft;
   if (state.draft) $('#draft-count').textContent = state.draft.items.length;
+  renderFavorites();
   const recent = recentItems();
   $('#recent-title').hidden = recent.length === 0;
   $('#recent').innerHTML = recent.map((it, i) =>
-    `<button class="chip" data-recent="${i}">${esc(it.name)} · ${round(it.grams)} g</button>`).join('');
+    `<button class="chip" data-recent="${i}">${esc(it.name)} · ${esc(amountLabel(it))}</button>`).join('');
   $('#recent').onclick = (e) => {
     const b = e.target.closest('[data-recent]');
     if (b) addToDraft([makeItem(recent[Number(b.dataset.recent)])]);
@@ -285,9 +325,15 @@ function renderReview() {
     <div class="card item" data-i="${i}">
       <div class="item-top">
         <input class="name" data-f="name" value="${esc(it.name)}" placeholder="Naam" aria-label="Naam">
-        <input class="grams" data-f="grams" type="text" inputmode="decimal" value="${round(it.grams)}" aria-label="Gram">
-        <span class="unit">g</span>
         <button class="del" data-del="${i}" aria-label="Verwijderen">×</button>
+      </div>
+      <div class="item-qty">
+        <input class="amount" data-f="amount" type="text" inputmode="decimal" aria-label="Hoeveelheid"
+          value="${it.measure ? fmtNum(it.amount) : round(it.grams)}">
+        <select data-f="unit" aria-label="Maat">${unitsFor(it).map((u, j) => {
+          const selected = it.measure ? u.name === it.measure.name : j === 0;
+          return `<option value="${j}" ${selected ? 'selected' : ''}>${u.name === 'gram' ? 'gram' : `${esc(u.name)} (${round(u.grams)} g)`}</option>`;
+        }).join('')}</select>
       </div>
       <div class="item-sum"><span>${nutriBadge(it)}<span class="item-kcal"></span></span>
         <button class="link small" data-toggle="${i}">per 100 g aanpassen</button></div>
@@ -308,7 +354,7 @@ function updateReviewTotals() {
   $$('#review-items .item').forEach((el, i) => {
     const t = itemTotals(d.items[i]);
     el.querySelector('.item-kcal').textContent =
-      `${round(t.kcal)} kcal · E ${round(t.protein)} · K ${round(t.carbs)} · V ${round(t.fat)}`;
+      `${d.items[i].measure ? `${round(d.items[i].grams)} g · ` : ''}${round(t.kcal)} kcal · E ${round(t.protein)} · K ${round(t.carbs)} · V ${round(t.fat)}`;
   });
   const t = sumItems(d.items);
   $('#review-kcal').textContent = round(t.kcal);
@@ -324,8 +370,26 @@ $('#review-items').addEventListener('input', (e) => {
   if (!f || !card) return;
   const it = state.draft.items[Number(card.dataset.i)];
   if (f === 'name') it.name = e.target.value;
-  else if (f === 'grams') it.grams = num(e.target.value);
-  else it.per100[f] = num(e.target.value);
+  else if (f === 'amount') {
+    if (it.measure) {
+      it.amount = num(e.target.value);
+      it.grams = it.amount * it.measure.grams;
+    } else {
+      it.grams = num(e.target.value);
+    }
+  } else if (f === 'unit') {
+    const u = unitsFor(it)[Number(e.target.value)];
+    if (u.name === 'gram') {
+      delete it.measure;
+      delete it.amount;
+    } else {
+      // Hoeveelheid zo goed mogelijk behouden, afgerond op halven.
+      it.measure = { ...u };
+      it.amount = Math.max(0.5, Math.round((it.grams / u.grams) * 2) / 2);
+      it.grams = it.amount * u.grams;
+    }
+    card.querySelector('.amount').value = it.measure ? fmtNum(it.amount) : round(it.grams);
+  } else it.per100[f] = num(e.target.value);
   updateReviewTotals();
 });
 $('#review-items').addEventListener('click', (e) => {
@@ -378,6 +442,9 @@ $('#review-delete').onclick = () => {
 const AI_PROMPT = `Je bent een voedingsdeskundige. Bepaal wat de gebruiker eet en schat per onderdeel:
 - een korte Nederlandse naam (bijv. "witte rijst, gekookt", "kipfilet, gebakken")
 - het gewicht in gram van wat er daadwerkelijk gegeten wordt
+- een gewone huishoudelijke maat ("unit_name", bijv. "sneetje", "stuk", "eetlepel", "opscheplepel", "glas",
+  "schaaltje", "plak"), het gewicht van één zo'n maat in gram ("unit_grams") en hoeveel ervan ("amount", mag 0,5 zijn).
+  grams moet gelijk zijn aan amount × unit_grams.
 - de voedingswaarde per 100 gram: kcal, eiwit, koolhydraten, vet en vezels (gram)
 Splits een gerecht op in losse onderdelen. Denk aan verborgen calorieën zoals bakolie, boter en sauzen
 en neem die als apart onderdeel op als ze waarschijnlijk aanwezig zijn. Gebruik voedingswaardes zoals in de
@@ -394,13 +461,17 @@ const AI_SCHEMA = {
         properties: {
           name: { type: 'STRING' },
           grams: { type: 'NUMBER' },
+          unit_name: { type: 'STRING' },
+          unit_grams: { type: 'NUMBER' },
+          amount: { type: 'NUMBER' },
           kcal_per_100g: { type: 'NUMBER' },
           protein_per_100g: { type: 'NUMBER' },
           carbs_per_100g: { type: 'NUMBER' },
           fat_per_100g: { type: 'NUMBER' },
           fiber_per_100g: { type: 'NUMBER' },
         },
-        required: ['name', 'grams', 'kcal_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'fiber_per_100g'],
+        required: ['name', 'grams', 'unit_name', 'unit_grams', 'amount',
+          'kcal_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'fiber_per_100g'],
       },
     },
     note: { type: 'STRING' },
@@ -412,6 +483,9 @@ function aiResultToItems(result) {
   return (result.items || []).map((x) => makeItem({
     name: x.name,
     grams: x.grams,
+    unit: { name: x.unit_name, grams: x.unit_grams },
+    measure: { name: x.unit_name, grams: x.unit_grams },
+    amount: x.amount,
     per100: {
       kcal: x.kcal_per_100g, protein: x.protein_per_100g, carbs: x.carbs_per_100g,
       fat: x.fat_per_100g, fiber: x.fiber_per_100g,
@@ -701,9 +775,13 @@ function offToItem(p) {
   if (kcal == null && n.energy_100g != null) kcal = n.energy_100g / 4.184; // kJ -> kcal
   const brand = (p.brands || '').split(',')[0].trim();
   const name = p.product_name_nl || p.product_name || 'Onbekend product';
+  const portion = num(p.serving_quantity) ? { name: 'portie', grams: num(p.serving_quantity) } : null;
   return makeItem({
     name: brand && !name.toLowerCase().includes(brand.toLowerCase()) ? `${name} (${brand})` : name,
-    grams: num(p.serving_quantity) || 100,
+    grams: portion?.grams || 100,
+    unit: portion,
+    measure: portion,
+    amount: 1,
     per100: { kcal, protein: n.proteins_100g, carbs: n.carbohydrates_100g, fat: n.fat_100g, fiber: n.fiber_100g },
     nutriscore: p.nutriscore_grade,
   });
@@ -793,8 +871,18 @@ $('#search-form').onsubmit = async (e) => {
   e.preventDefault();
   const q = $('#search-input').value.trim();
   if (!q) return;
-  setStatus('#search-status', 'Zoeken…', 'busy');
-  $('#search-results').innerHTML = '';
+  // NEVO staat op het apparaat en is direct klaar; Open Food Facts komt er daarna bij.
+  const nevoItems = searchNevo(q);
+  const renderResults = () => {
+    $('#search-results').innerHTML = searchResults.map((it, i) => `
+      <div class="card result" data-r="${i}">
+        <span>${it.source === 'NEVO' ? '<span class="src">NEVO</span>' : ''}${nutriBadge(it)}${esc(it.name)}</span>
+        <span class="num">${round(it.per100.kcal)} kcal/100 g</span>
+      </div>`).join('');
+  };
+  searchResults = nevoItems;
+  renderResults();
+  setStatus('#search-status', 'Producten zoeken in Open Food Facts…', 'busy');
   const url = (host) => `https://${host}.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}`
     + `&search_simple=1&action=process&json=1&page_size=25&fields=${OFF_FIELDS}`;
   try {
@@ -804,17 +892,13 @@ $('#search-form').onsubmit = async (e) => {
       const res = await fetch(url(host));
       if (!res.ok) throw new Error(res.status === 429 || res.status === 503
         ? 'Open Food Facts is even druk. Probeer het over een minuut opnieuw.'
-        : 'Zoeken mislukt.');
+        : 'Zoeken in Open Food Facts mislukt.');
       products = ((await res.json()).products || []).filter(hasNutrition);
       if (products.length) break;
     }
-    searchResults = products.map(offToItem);
+    searchResults = [...nevoItems, ...products.map(offToItem)];
     setStatus('#search-status', searchResults.length ? '' : 'Niets gevonden. Probeer een andere zoekterm of "Beschrijven".');
-    $('#search-results').innerHTML = searchResults.map((it, i) => `
-      <div class="card result" data-r="${i}">
-        <span>${nutriBadge(it)}${esc(it.name)}</span>
-        <span class="num">${round(it.per100.kcal)} kcal/100 g</span>
-      </div>`).join('');
+    renderResults();
   } catch (err) {
     setStatus('#search-status', err.message === 'Failed to fetch' ? 'Geen internetverbinding.' : err.message, 'error');
   }
@@ -822,6 +906,137 @@ $('#search-form').onsubmit = async (e) => {
 $('#search-results').onclick = (e) => {
   const r = e.target.closest('[data-r]');
   if (r) addToDraft([makeItem(searchResults[Number(r.dataset.r)])]);
+};
+
+// ---------- NEVO (Nederlandse voedingsmiddelentabel) ----------
+
+// Opgeslagen als { rows: [[naam, kcal, eiwit, koolh, vet, vezels], ...], count, date }, gedeeld door alle profielen.
+let nevo = load('eetmeter.nevo', null);
+
+function searchNevo(q) {
+  if (!nevo?.rows?.length) return [];
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  return nevo.rows
+    .filter((r) => { const n = r[0].toLowerCase(); return words.every((w) => n.includes(w)); })
+    .sort((a, b) => a[0].length - b[0].length)
+    .slice(0, 15)
+    .map((r) => makeItem({
+      name: r[0], grams: 100, source: 'NEVO',
+      per100: { kcal: r[1], protein: r[2], carbs: r[3], fat: r[4], fiber: r[5] },
+    }));
+}
+
+// Eenvoudige CSV-lezer die aanhalingstekens en elk scheidingsteken aankan.
+function parseDelimited(text, delim) {
+  const rows = [];
+  let row = [], field = '', quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"' && field === '') quoted = true;
+    else if (c === delim) { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); rows.push(row); row = []; field = '';
+    } else field += c;
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((f) => f.trim()));
+}
+
+function parseNevo(text) {
+  // Scheidingsteken: het teken dat in de eerste regels het vaakst voorkomt.
+  const head = text.split(/\r?\n/, 10).join('\n');
+  const delim = ['|', ';', '\t', ','].sort((a, b) => head.split(b).length - head.split(a).length)[0];
+  const allRows = parseDelimited(text, delim);
+  // Soms staan er titelregels boven de kolomnamen.
+  const hi = Math.max(0, allRows.slice(0, 10).findIndex((r) =>
+    r.some((h) => /voedingsmiddelnaam|food ?name/i.test(h)) && r.some((h) => /ENERCC|kcal/i.test(h))));
+  const rows = allRows.slice(hi);
+  const header = rows[0].map((h) => h.trim());
+  const find = (...res) => {
+    for (const re of res) {
+      const i = header.findIndex((h) => re.test(h));
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+  const col = {
+    name: find(/voedingsmiddelnaam/i, /dutch food name/i, /food ?name/i, /naam/i),
+    kcal: find(/^ENERCC\b/i, /kcal/i),
+    protein: find(/^PROT\b/i, /eiwit/i),
+    carbs: find(/^CHO\b/i, /koolhydra/i),
+    fat: find(/^FAT\b/i, /^vet/i),
+    fiber: find(/^FIBT\b/i, /vezel/i),
+  };
+  if (col.name < 0 || col.kcal < 0) {
+    throw new Error('Dit lijkt geen NEVO-bestand: kolommen voor naam en kcal niet gevonden.');
+  }
+  const val = (r, i) => (i < 0 ? 0 : num(r[i]));
+  const out = rows.slice(1)
+    .filter((r) => r[col.name]?.trim())
+    .map((r) => [r[col.name].trim(), val(r, col.kcal), val(r, col.protein), val(r, col.carbs), val(r, col.fat), val(r, col.fiber)]);
+  if (!out.length) throw new Error('Geen producten gevonden in dit bestand.');
+  return out;
+}
+
+async function readTextFile(file) {
+  const buf = await file.arrayBuffer();
+  const utf8 = new TextDecoder('utf-8').decode(buf);
+  // Oudere NEVO-bestanden zijn in Windows-codering; dan worden é en ë anders kapot.
+  return utf8.includes('�') ? new TextDecoder('windows-1252').decode(buf) : utf8;
+}
+
+// Excel lezen met SheetJS; alleen geladen als iemand een Excel-bestand kiest.
+async function excelToCsv(file) {
+  if (!window.XLSX) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('Excel-lezer kon niet laden (geen internet?).'));
+      document.head.appendChild(s);
+    });
+  }
+  const wb = window.XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  return window.XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]], { FS: '|' });
+}
+
+function renderNevoStatus() {
+  $('#nevo-status').textContent = nevo?.rows?.length
+    ? `Geïmporteerd: ${nevo.rows.length.toLocaleString('nl-NL')} producten (${shortDate(nevo.date)}).`
+    : 'Nog niet geïmporteerd.';
+  $('#nevo-remove').hidden = !nevo?.rows?.length;
+}
+
+$('#nevo-file').onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (/\.zip$/i.test(file.name)) {
+    toast('Pak het zip-bestand eerst uit en kies dan het CSV- of Excel-bestand.');
+    return;
+  }
+  try {
+    toast('Bestand inlezen…');
+    const text = /\.xlsx?$/i.test(file.name) ? await excelToCsv(file) : await readTextFile(file);
+    const rows = parseNevo(text);
+    nevo = { rows, date: todayKey() };
+    save('eetmeter.nevo', nevo);
+    renderNevoStatus();
+    toast(`${rows.length.toLocaleString('nl-NL')} NEVO-producten geïmporteerd`);
+  } catch (err) {
+    toast(err.message);
+  }
+};
+$('#nevo-remove').onclick = () => {
+  if (!confirm('NEVO-tabel van dit apparaat verwijderen?')) return;
+  nevo = null;
+  try { localStorage.removeItem('eetmeter.nevo'); } catch { /* niets */ }
+  renderNevoStatus();
 };
 
 // ---------- Profielen en vragenlijst ----------
@@ -995,7 +1210,11 @@ $('#profile-form').onsubmit = (e) => {
     p = { id: uid() };
     profiles.list.push(p);
   }
-  Object.assign(p, { name, answers: a, goalKcal: c.kcal, goalProtein: c.protein, skipped: false });
+  const goalChanged = !p.answers || p.answers.goal !== a.goal || p.answers.target !== a.target || p.answers.pace !== a.pace;
+  Object.assign(p, { name, answers: a, goalKcal: c.kcal, goalProtein: c.protein, skipped: false, manualGoal: false });
+  // Startpunt van het plan, om later te kunnen zeggen of je op schema ligt.
+  if (goalChanged || !p.goalSince) p.goalSince = todayKey();
+  recordWeight(p, a.weight);
   save('eetmeter.profiles', profiles);
   if (p.id !== profiles.active) switchProfile(p.id);
   state.profileEdit = null;
@@ -1022,6 +1241,7 @@ $('#pf-delete').onclick = () => {
   try {
     localStorage.removeItem(`eetmeter.log.${id}`);
     localStorage.removeItem(`eetmeter.dayAdvice.${id}`);
+    localStorage.removeItem(`eetmeter.water.${id}`);
   } catch { /* niets */ }
   switchProfile(profiles.list[0].id);
   state.profileEdit = null;
@@ -1030,6 +1250,359 @@ $('#pf-delete').onclick = () => {
 
 $('#edit-profile').onclick = () => openProfileForm(profiles.active);
 $('#new-profile').onclick = () => openProfileForm(null);
+
+// ---------- Gewicht ----------
+
+const shortDate = (key) => {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' });
+};
+const daysBetween = (a, b) => {
+  const toDate = (k) => { const [y, m, d] = k.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+  return Math.round((toDate(b) - toDate(a)) / 864e5);
+};
+
+// Alleen opslaan, niets herberekenen (gebruikt door de vragenlijst).
+function recordWeight(p, value, date = todayKey()) {
+  const w = (p.weights ||= []);
+  const existing = w.find((x) => x.date === date);
+  if (existing) existing.kg = value;
+  else w.push({ date, kg: value });
+  w.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+const goalReached = (p) => {
+  const a = p.answers;
+  const last = p.weights?.at(-1)?.kg;
+  if (!a || last == null) return false;
+  return (a.goal === 'af' && last <= a.target) || (a.goal === 'aan' && last >= a.target);
+};
+
+function saveWeight(value) {
+  const p = profile();
+  recordWeight(p, value);
+  let msg = 'Gewicht opgeslagen';
+  if (p.answers) {
+    p.answers.weight = value;
+    if (goalReached(p)) {
+      msg = 'Streefgewicht bereikt, goed gedaan!';
+    } else if (!p.manualGoal) {
+      // Dagdoel meebewegen met je gewicht, tenzij je het zelf hebt aangepast.
+      const c = calculate(p.answers);
+      if (!c.blocks.length && c.kcal !== p.goalKcal) {
+        p.goalKcal = c.kcal;
+        p.goalProtein = c.protein;
+        msg = `Gewicht opgeslagen. Nieuw dagdoel: ${c.kcal} kcal`;
+      }
+    }
+  }
+  save('eetmeter.profiles', profiles);
+  toast(msg);
+  renderProgress();
+}
+
+$('#weight-form').onsubmit = (e) => {
+  e.preventDefault();
+  const v = num($('#weight-input').value);
+  if (v < 30 || v > 350) return toast('Vul een gewicht in kg in, bijv. 72,4');
+  $('#weight-input').value = '';
+  saveWeight(v);
+};
+
+$('#weight-list').onclick = (e) => {
+  const b = e.target.closest('[data-wdel]');
+  if (!b) return;
+  const p = profile();
+  p.weights = p.weights.filter((w) => w.date !== b.dataset.wdel);
+  save('eetmeter.profiles', profiles);
+  renderProgress();
+};
+
+$('#goal-maintain').onclick = () => {
+  const p = profile();
+  const last = p.weights.at(-1).kg;
+  Object.assign(p.answers, { goal: 'gelijk', weight: last, target: last });
+  const c = calculate(p.answers);
+  Object.assign(p, { goalKcal: c.kcal, goalProtein: c.protein, manualGoal: false, goalSince: todayKey() });
+  save('eetmeter.profiles', profiles);
+  toast(`Nieuw doel: op gewicht blijven, ${c.kcal} kcal per dag`);
+  renderProgress();
+};
+
+// Hoe ver je bent ten opzichte van het geplande tempo.
+function scheduleText(p) {
+  const a = p.answers;
+  const w = p.weights || [];
+  if (!a || w.length < 2) return '';
+  const start = [...w].reverse().find((x) => x.date <= (p.goalSince || w[0].date)) || w[0];
+  const last = w.at(-1);
+  const weeks = daysBetween(start.date, last.date) / 7;
+  const change = last.kg - start.kg;
+  if (a.goal === 'gelijk') {
+    return Math.abs(last.kg - a.target) <= 1
+      ? 'Je blijft mooi rond je gewicht.'
+      : `Je zit ${kg(Math.abs(last.kg - a.target))} kg ${last.kg > a.target ? 'boven' : 'onder'} je streefgewicht.`;
+  }
+  if (weeks < 1) return '';
+  const dir = a.goal === 'af' ? -1 : 1;
+  const expected = a.pace * weeks; // kg verandering volgens plan
+  const actual = change * dir; // positief = goede richting
+  if (actual >= expected - 0.3) return `Je ligt op schema: ${kg(Math.abs(change))} kg in ${Math.round(weeks)} weken.`;
+  if (actual > 0) return `Je gaat de goede kant op (${kg(Math.abs(change))} kg), iets langzamer dan gepland. Geen zorgen: gewicht schommelt per week.`;
+  return 'Nog geen verandering richting je doel. Kijk eens of je dagdoel en porties kloppen, of vraag om advies.';
+}
+
+// Lijngrafiek van je gewicht met een stippellijn voor je streefgewicht. Eén reeks, dus geen legenda.
+function weightChart(weights, target) {
+  const W = 340, H = 180, L = 36, R = 10, T = 12, B = 24;
+  const today = todayKey();
+  const first = weights[0].date;
+  const lastDate = weights.at(-1).date > today ? weights.at(-1).date : today;
+  const span = Math.max(daysBetween(first, lastDate), 1);
+  const vals = weights.map((w) => w.kg).concat(target ? [target] : []);
+  let lo = Math.floor(Math.min(...vals) - 1), hi = Math.ceil(Math.max(...vals) + 1);
+  if (hi - lo < 4) { lo -= 1; hi += 1; }
+  const x = (d) => L + (daysBetween(first, d) / span) * (W - L - R);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const ticks = [lo, Math.round((lo + hi) / 2), hi];
+  const pts = weights.map((w) => `${x(w.date).toFixed(1)},${y(w.kg).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Gewicht in de tijd">
+    ${ticks.map((t) => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" class="grid"/>
+      <text x="${L - 6}" y="${y(t) + 4}" class="axis" text-anchor="end">${t}</text>`).join('')}
+    ${target ? `<line x1="${L}" x2="${W - R}" y1="${y(target)}" y2="${y(target)}" class="ref"/>
+      <text x="${W - R}" y="${y(target) - 5}" class="axis" text-anchor="end">doel ${kg(target)} kg</text>` : ''}
+    ${weights.length > 1 ? `<polyline points="${pts}" class="line"/>` : ''}
+    ${weights.map((w) => `<g class="pt" data-tip="${shortDate(w.date)}: ${kg(w.kg)} kg">
+      <circle cx="${x(w.date)}" cy="${y(w.kg)}" r="12" class="hit"/>
+      <circle cx="${x(w.date)}" cy="${y(w.kg)}" r="4" class="dot"/></g>`).join('')}
+    <text x="${L}" y="${H - 6}" class="axis">${shortDate(first)}</text>
+    <text x="${W - R}" y="${H - 6}" class="axis" text-anchor="end">${shortDate(lastDate)}</text>
+  </svg>`;
+}
+
+function renderWeight() {
+  const p = profile();
+  const w = p.weights || [];
+  const a = p.answers;
+  const last = w.at(-1);
+  let summary = 'Vul je gewicht in om je voortgang te zien.';
+  if (last) {
+    const diff = last.kg - w[0].kg;
+    summary = `<div><span class="kcal-big">${kg(last.kg)}</span> kg <span class="muted small">op ${shortDate(last.date)}</span></div>`
+      + (w.length > 1 ? `<div class="muted small">${diff <= 0 ? '−' : '+'}${kg(Math.abs(diff))} kg sinds ${shortDate(w[0].date)}</div>` : '')
+      + (a && a.goal !== 'gelijk' && !goalReached(p) ? `<div class="small">Nog ${kg(Math.abs(last.kg - a.target))} kg tot je streefgewicht van ${kg(a.target)} kg.</div>` : '')
+      + (scheduleText(p) ? `<div class="small">${esc(scheduleText(p))}</div>` : '');
+  }
+  $('#weight-summary').innerHTML = summary;
+  $('#goal-reached').hidden = !goalReached(p);
+  $('#weight-chart').innerHTML = w.length ? weightChart(w, a && a.goal !== 'gelijk' ? a.target : null) : '';
+  $('#weight-tip').textContent = w.length ? 'Tik op een punt voor de waarde.' : '';
+  // Lijst als tabelweergave van de grafiek, nieuwste eerst.
+  $('#weight-list').innerHTML = [...w].reverse().slice(0, 10).map((x) =>
+    `<div class="wrow"><span>${shortDate(x.date)}</span><span>${kg(x.kg)} kg</span>
+      <button class="del" data-wdel="${x.date}" aria-label="Verwijderen">×</button></div>`).join('');
+}
+
+// Tooltip voor grafieken: tik of beweeg over een punt of balk.
+function chartTip(container, tipEl) {
+  const showTip = (e) => {
+    const g = e.target.closest('[data-tip]');
+    if (g) $(tipEl).textContent = g.dataset.tip;
+  };
+  $(container).addEventListener('click', showTip);
+  $(container).addEventListener('pointerover', showTip);
+}
+chartTip('#weight-chart', '#weight-tip');
+chartTip('#week-chart', '#week-tip');
+
+// ---------- Weekoverzicht ----------
+
+function mondayOf(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  const day = (new Date(y, m - 1, d).getDay() + 6) % 7; // 0 = maandag
+  return shiftDate(key, -day);
+}
+
+function renderWeek() {
+  state.weekStart ||= mondayOf(todayKey());
+  const start = state.weekStart;
+  const days = Array.from({ length: 7 }, (_, i) => shiftDate(start, i));
+  const goal = profile().goalKcal;
+  const stats = days.map((d) => {
+    const t = sumItems((log[d] || []).flatMap((e) => e.items));
+    return { d, kcal: t.kcal, protein: t.protein, fiber: t.fiber, logged: (log[d] || []).length > 0, water: water[d] || 0 };
+  });
+  const logged = stats.filter((s) => s.logged);
+  const avg = (k) => (logged.length ? logged.reduce((s, x) => s + x[k], 0) / logged.length : 0);
+  const onTarget = logged.filter((s) => s.kcal >= goal * 0.9 && s.kcal <= goal * 1.1).length;
+
+  $('#week-label').textContent = `${shortDate(days[0])} – ${shortDate(days[6])}`;
+  $('#week-next').disabled = shiftDate(start, 7) > todayKey();
+  $('#week-stats').innerHTML = logged.length
+    ? `<div class="macros">
+        <div><b>${round(avg('kcal'))}</b><span>kcal gem. (doel ${goal})</span></div>
+        <div><b>${round(avg('protein'))}</b><span>eiwit gem.${profile().goalProtein ? ` (${profile().goalProtein})` : ''}</span></div>
+        <div><b>${onTarget}/${logged.length}</b><span>dagen op doel</span></div>
+        <div><b>${round(avg('fiber'))}</b><span>vezels gem.</span></div>
+      </div>
+      <p class="muted small">Gemiddelden over de ${logged.length} bijgehouden dag${logged.length === 1 ? '' : 'en'}.
+        "Op doel" = binnen 10% van je dagdoel. Vezels: het advies is zo'n 30–40 g per dag.</p>`
+    : '<p class="muted small">Deze week is nog niets bijgehouden.</p>';
+
+  // Staafgrafiek per dag met een stippellijn voor het dagdoel.
+  const W = 340, H = 170, L = 8, R = 8, T = 16, B = 24;
+  const max = Math.max(goal * 1.25, ...stats.map((s) => s.kcal));
+  const bw = (W - L - R) / 7;
+  const y = (v) => T + (1 - v / max) * (H - T - B);
+  const names = ['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'];
+  $('#week-chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="kcal per dag deze week">
+    <line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" class="baseline"/>
+    ${stats.map((s, i) => {
+      const x0 = L + i * bw + bw * 0.2, w = bw * 0.6, top = y(s.kcal), h = H - B - top;
+      const tip = `${names[i]} ${shortDate(s.d)}: ${s.logged ? `${round(s.kcal)} kcal, ${round(s.protein)} g eiwit` : 'niets bijgehouden'}`;
+      return `<g data-tip="${tip}">
+        <rect x="${L + i * bw}" y="${T}" width="${bw}" height="${H - B - T}" class="hit"/>
+        ${s.kcal > 0 ? `<path d="M${x0},${H - B} v${-(h - 4)} q0,-4 4,-4 h${w - 8} q4,0 4,4 v${h - 4} z" class="bar"/>` : ''}
+        <text x="${L + i * bw + bw / 2}" y="${H - 7}" class="axis" text-anchor="middle">${names[i]}</text></g>`;
+    }).join('')}
+    <line x1="${L}" x2="${W - R}" y1="${y(goal)}" y2="${y(goal)}" class="ref"/>
+    <text x="${W - R}" y="${y(goal) - 5}" class="axis" text-anchor="end">doel ${goal}</text>
+  </svg>`;
+  $('#week-tip').textContent = 'Tik op een dag voor de waarde.';
+}
+
+$('#week-prev').onclick = () => { state.weekStart = shiftDate(state.weekStart, -7); renderWeek(); };
+$('#week-next').onclick = () => { state.weekStart = shiftDate(state.weekStart, 7); renderWeek(); };
+
+function renderProgress() {
+  renderWeight();
+  renderWeek();
+}
+
+// ---------- Vaste maaltijden ----------
+
+$('#review-fav').onclick = () => {
+  const d = state.draft;
+  if (!d.items.length) return;
+  const name = prompt('Naam voor deze vaste maaltijd:', `Mijn ${d.meal.toLowerCase()}`);
+  if (!name?.trim()) return;
+  const p = profile();
+  (p.favorites ||= []).push({
+    id: uid(), name: name.trim(),
+    items: d.items.map((it) => makeItem({ ...it, name: it.name.trim() || 'Onbekend' })),
+  });
+  save('eetmeter.profiles', profiles);
+  toast(`"${name.trim()}" bewaard als vaste maaltijd`);
+};
+
+function renderFavorites() {
+  const favs = profile().favorites || [];
+  $('#fav-title').hidden = favs.length === 0;
+  $('#favorites').innerHTML = favs.map((f, i) => `
+    <div class="card result" data-fav="${i}">
+      <span><b>★ ${esc(f.name)}</b><br><span class="muted small">${f.items.map((it) => esc(it.name)).join(', ')}</span></span>
+      <span class="num">${round(sumItems(f.items).kcal)} kcal
+        <button class="del" data-fav-del="${i}" aria-label="Vaste maaltijd verwijderen">×</button></span>
+    </div>`).join('');
+}
+
+$('#favorites').onclick = (e) => {
+  const favs = profile().favorites || [];
+  const del = e.target.closest('[data-fav-del]');
+  if (del) {
+    const f = favs[Number(del.dataset.favDel)];
+    if (!confirm(`Vaste maaltijd "${f.name}" verwijderen?`)) return;
+    favs.splice(Number(del.dataset.favDel), 1);
+    save('eetmeter.profiles', profiles);
+    renderFavorites();
+    return;
+  }
+  const card = e.target.closest('[data-fav]');
+  if (card) addToDraft(favs[Number(card.dataset.fav)].items.map((it) => makeItem(it)));
+};
+
+// ---------- Water ----------
+
+const WATER_GOAL = 8; // glazen van 250 ml, ongeveer 2 liter
+
+function renderWater() {
+  const n = water[state.date] || 0;
+  $('#water-count').textContent = `${n} / ${WATER_GOAL} glazen`;
+  $('#water-drops').innerHTML = Array.from({ length: Math.max(WATER_GOAL, n) }, (_, i) =>
+    `<span class="drop ${i < n ? 'full' : ''}"></span>`).join('');
+  $('#water-minus').disabled = n === 0;
+}
+function changeWater(delta) {
+  water[state.date] = Math.max(0, (water[state.date] || 0) + delta);
+  if (!water[state.date]) delete water[state.date];
+  save(waterKey(), water);
+  renderWater();
+}
+$('#water-plus').onclick = () => changeWater(1);
+$('#water-minus').onclick = () => changeWater(-1);
+
+// ---------- Maaltijdideeën ----------
+
+const IDEAS_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    ideas: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { title: { type: 'STRING' }, why: { type: 'STRING' }, items: AI_SCHEMA.properties.items },
+        required: ['title', 'why', 'items'],
+      },
+    },
+  },
+  required: ['ideas'],
+};
+
+$('#ideas-btn').onclick = () => runAdvice($('#ideas-btn'), '#ideas-status', async () => {
+  const p = profile();
+  const items = dayItems(state.date);
+  const t = sumItems(items);
+  const leftKcal = round(p.goalKcal - t.kcal);
+  const leftProtein = p.goalProtein ? round(p.goalProtein - t.protein) : null;
+  const meal = defaultMeal().toLowerCase();
+  const prompt = `Je bent een praktische voedingscoach die werkt volgens de Schijf van Vijf van het Voedingscentrum.
+Het is ${new Date().toTimeString().slice(0, 5)}. Bedenk 3 ideeën voor de volgende maaltijd (waarschijnlijk ${meal}).
+Dagdoel: ${p.goalKcal} kcal${p.goalProtein ? `, ${p.goalProtein} g eiwit` : ''}. ${p.answers ? goalDescription(p.answers) : ''}
+Vandaag al gegeten: ${items.length ? items.map((it) => `${it.name} (${round(it.grams)} g)`).join('; ') : 'nog niets'}.
+Nog over: ${leftKcal} kcal${leftProtein !== null ? `, ${leftProtein} g eiwit` : ''}.
+
+Regels:
+- Elk idee past bij wat er nog over is (ongeveer, niet meer). Is er weinig of niets over, stel dan lichte opties voor
+  zoals groente, fruit, magere kwark of soep, en zeg vriendelijk dat dat prima is; nooit veroordelend.
+- Gewone producten uit een Nederlandse supermarkt, klaar in maximaal 20 minuten.
+- Zorg voor afwisseling met wat er vandaag al gegeten is, en let op eiwit en groente.
+- "title": korte naam van het gerecht. "why": één zin waarom dit nu goed past.
+- "items": de onderdelen met hoeveelheden en voedingswaardes, net zo als bij het analyseren van eten:
+  naam, grams, unit_name, unit_grams, amount en per 100 g kcal, eiwit, koolhydraten, vet en vezels.
+Schrijf in het Nederlands.`;
+  const r = await askAI(prompt, IDEAS_SCHEMA);
+  state.ideas = (r.ideas || []).slice(0, 3).map((idea) => ({
+    title: String(idea.title || ''), why: String(idea.why || ''), items: aiResultToItems({ items: idea.items }),
+  })).filter((idea) => idea.items.length);
+  renderIdeas();
+});
+
+function renderIdeas() {
+  const ideas = state.date === todayKey() ? state.ideas || [] : [];
+  $('#ideas').innerHTML = ideas.map((idea, i) => {
+    const t = sumItems(idea.items);
+    return `<div class="card idea">
+      <div class="idea-head"><b>${esc(idea.title)}</b><span class="num">${round(t.kcal)} kcal · ${round(t.protein)} g eiwit</span></div>
+      <div class="muted small">${esc(idea.why)}</div>
+      <div class="small">${idea.items.map((it) => `${esc(amountLabel(it))} ${esc(it.name)}`).join(' · ')}</div>
+      <button class="btn secondary" data-idea="${i}">Dit ga ik eten</button>
+    </div>`;
+  }).join('');
+}
+$('#ideas').onclick = (e) => {
+  const b = e.target.closest('[data-idea]');
+  if (b) addToDraft(state.ideas[Number(b.dataset.idea)].items.map((it) => makeItem(it)));
+};
 
 // ---------- Instellingen ----------
 
@@ -1048,6 +1621,8 @@ function renderSettings() {
   $('#gemini-settings').hidden = settings.provider !== 'gemini';
   $('#ollama-settings').hidden = settings.provider !== 'ollama';
   setStatus('#settings-status', '');
+  $('#goal-manual-note').hidden = !p.manualGoal;
+  renderNevoStatus();
 }
 
 $('#view-settings').addEventListener('change', (e) => {
@@ -1059,6 +1634,7 @@ $('#view-settings').addEventListener('change', (e) => {
   if (goals[e.target.id]) {
     const [key, parse] = goals[e.target.id];
     profile()[key] = parse(e.target.value);
+    profile().manualGoal = true; // niet meer automatisch bijwerken bij nieuw gewicht
     save('eetmeter.profiles', profiles);
     renderSettings();
     toast('Doel aangepast');
@@ -1092,7 +1668,7 @@ $('#test-ai').onclick = async () => {
 
 $('#export').onclick = () => {
   // Back-up van het actieve profiel; de API-key gaat nooit mee.
-  const blob = new Blob([JSON.stringify({ version: 2, profile: profile(), log, dayAdvice }, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ version: 2, profile: profile(), log, dayAdvice, water }, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   const slug = displayName(profile()).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -1113,6 +1689,12 @@ $('#import').onchange = async (e) => {
       for (const entry of entries) if (!existing.some((x) => x.id === entry.id)) existing.push(entry);
     }
     save(logKey(), log);
+    for (const [day, n] of Object.entries(data.water || {})) water[day] = Math.max(water[day] || 0, n);
+    save(waterKey(), water);
+    const p = profile();
+    for (const w of data.profile?.weights || []) if (!p.weights?.some((x) => x.date === w.date)) recordWeight(p, w.kg, w.date);
+    for (const f of data.profile?.favorites || []) if (!(p.favorites ||= []).some((x) => x.id === f.id)) p.favorites.push(f);
+    save('eetmeter.profiles', profiles);
     toast('Back-up geïmporteerd');
   } catch {
     toast('Dit is geen geldige back-up');

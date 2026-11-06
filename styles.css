@@ -216,3 +216,52 @@ fieldset.field legend { padding: 0; margin-bottom: 4px; }
   background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 99px; font-size: .9rem; z-index: 10;
   max-width: calc(100% - 32px);
 }
+
+/* Gewone maten in het controlescherm */
+.item-qty { display: flex; gap: 8px; }
+.item-qty .amount { width: 86px; flex: none; text-align: right; }
+.item-qty select { flex: 1; min-width: 0; }
+
+/* Water */
+.water { display: flex; flex-direction: column; gap: 8px; }
+.water-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.water-btns { display: flex; gap: 8px; }
+.round-btn {
+  width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--card); color: var(--text); font: inherit; font-size: 1.3rem; cursor: pointer;
+}
+.round-btn.plus { background: var(--accent); border-color: var(--accent); color: #fff; }
+.round-btn:disabled { opacity: .4; }
+.drops { display: flex; gap: 6px; flex-wrap: wrap; }
+.drop { width: 14px; height: 18px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; border: 2px solid var(--water); }
+.drop.full { background: var(--water); }
+:root { --water: #3b82c4; }
+@media (prefers-color-scheme: dark) { :root { --water: #6aaee6; } }
+
+/* Ideeën */
+.idea { display: flex; flex-direction: column; gap: 6px; }
+.idea-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.idea-head .num { white-space: nowrap; color: var(--muted); font-size: .85rem; }
+
+/* Zoekresultaten uit NEVO */
+.src {
+  display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px; font-size: .7rem; font-weight: 700;
+  background: var(--accent-soft); color: var(--accent); vertical-align: 1px;
+}
+
+/* Grafieken: dunne lijnen, rustige assen, één kleur */
+.chart { width: 100%; height: auto; display: block; touch-action: manipulation; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .baseline { stroke: var(--muted); stroke-width: 1; }
+.chart .ref { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .dot { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart .bar { fill: var(--accent); }
+.chart g[data-tip]:hover .bar, .chart .pt:hover .dot { opacity: .8; }
+.week-nav { display: flex; align-items: center; justify-content: space-between; }
+.wrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .9rem; padding: 2px 0; }
+.wrow span:first-child { flex: 1; color: var(--muted); }
+.wrow .del { border: 0; background: none; color: var(--muted); font-size: 1.2rem; cursor: pointer; }
+.result .del { border: 0; background: none; color: var(--muted); font-size: 1.2rem; cursor: pointer; padding: 0 0 0 6px; }

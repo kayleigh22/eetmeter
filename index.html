@@ -41,6 +41,19 @@
           <div><b id="tot-fiber">0</b><span>vezels (g)</span></div>
         </div>
       </div>
+      <div class="card water">
+        <div class="water-top">
+          <div><b>Water</b> <span class="muted small" id="water-count">0 / 8 glazen</span></div>
+          <div class="water-btns">
+            <button class="round-btn" id="water-minus" aria-label="Glas eraf">−</button>
+            <button class="round-btn plus" id="water-plus" aria-label="Glas erbij">+</button>
+          </div>
+        </div>
+        <div class="drops" id="water-drops" aria-hidden="true"></div>
+      </div>
+      <button class="btn secondary wide" id="ideas-btn">Wat kan ik nog eten?</button>
+      <p class="status" id="ideas-status"></p>
+      <div id="ideas" class="form-stack"></div>
       <button class="btn secondary wide" id="day-advise">Advies over deze dag</button>
       <p class="status" id="day-advice-status"></p>
       <div id="day-advice"></div>
@@ -61,6 +74,8 @@
         <button class="add-tile" data-go="search"><span class="tile-icon">⌕</span>Product zoeken</button>
       </div>
       <button class="btn secondary wide" id="add-manual">+ Handmatig invoeren</button>
+      <h2 class="section-title" id="fav-title" hidden>Vaste maaltijden</h2>
+      <div id="favorites"></div>
       <h2 class="section-title" id="recent-title" hidden>Recent gegeten</h2>
       <div class="chips" id="recent"></div>
     </section>
@@ -142,7 +157,40 @@
         <button class="btn secondary wide" id="review-cancel">Annuleren</button>
         <button class="btn wide" id="review-save">Opslaan</button>
       </div>
+      <button class="btn secondary wide" id="review-fav">☆ Bewaar als vaste maaltijd</button>
       <button class="btn danger wide" id="review-delete" hidden>Maaltijd verwijderen</button>
+    </section>
+
+    <!-- Voortgang -->
+    <section class="view" id="view-progress" hidden>
+      <h2 class="section-title">Gewicht</h2>
+      <div class="card form-stack">
+        <div id="weight-summary"></div>
+        <div id="goal-reached" class="warn" hidden>
+          Je hebt je streefgewicht bereikt! Wil je nu op dit gewicht blijven?
+          <button class="btn secondary wide" id="goal-maintain">Ja, doel wordt: op gewicht blijven</button>
+        </div>
+        <div id="weight-chart"></div>
+        <p class="muted small" id="weight-tip"></p>
+        <form class="row" id="weight-form">
+          <input type="text" inputmode="decimal" id="weight-input" placeholder="Gewicht vandaag (kg)" aria-label="Gewicht vandaag in kg">
+          <button class="btn" type="submit">Opslaan</button>
+        </form>
+        <p class="muted small">Tip: weeg jezelf bijvoorbeeld 1× per week, op hetzelfde moment (’s ochtends, voor het ontbijt).</p>
+        <div id="weight-list"></div>
+      </div>
+
+      <h2 class="section-title">Week</h2>
+      <div class="card form-stack">
+        <div class="week-nav">
+          <button class="icon-btn" id="week-prev" aria-label="Vorige week">‹</button>
+          <b id="week-label"></b>
+          <button class="icon-btn" id="week-next" aria-label="Volgende week">›</button>
+        </div>
+        <div id="week-chart"></div>
+        <p class="muted small" id="week-tip"></p>
+        <div id="week-stats"></div>
+      </div>
     </section>
 
     <!-- Profiel / vragenlijst -->
@@ -220,6 +268,7 @@
         <label class="field">kcal per dag<input type="number" id="set-goal-kcal" min="0"></label>
         <label class="field">eiwit (g)<input type="number" id="set-goal-protein" min="0"></label>
       </div>
+      <p class="muted small" id="goal-manual-note" hidden>Je hebt het dagdoel zelf aangepast, dus het verandert niet automatisch mee met je gewicht. Vul de vragenlijst opnieuw in om weer de berekening te gebruiken.</p>
 
       <h2 class="section-title">Fotoherkenning</h2>
       <label class="field">Dienst
@@ -249,6 +298,19 @@
       <button class="btn secondary wide" id="test-ai">Verbinding testen</button>
       <p class="status" id="settings-status"></p>
 
+      <h2 class="section-title">Voedingsmiddelentabel (NEVO)</h2>
+      <p class="muted small">Met de officiële Nederlandse tabel van het RIVM vind je bij <b>Zoeken</b> exacte waardes voor onverpakt eten,
+        zoals aardappels, kipfilet of een appel. Download het bestand (CSV of Excel) gratis via
+        <a href="https://www.rivm.nl/nederlands-voedingsstoffenbestand/gebruik-nevo-online/download-bestand" target="_blank" rel="noopener">de NEVO-pagina van het RIVM</a> (je gaat daar akkoord met hun voorwaarden) en importeer het hier.
+        Het blijft alleen op dit apparaat.</p>
+      <p class="small" id="nevo-status"></p>
+      <div class="row">
+        <label class="btn secondary wide">NEVO-bestand importeren
+          <input type="file" accept=".csv,.txt,.xlsx,.xls,text/csv,text/plain" id="nevo-file" hidden>
+        </label>
+        <button class="btn danger" id="nevo-remove" hidden>Verwijderen</button>
+      </div>
+
       <h2 class="section-title">Back-up</h2>
       <p class="muted small">Je gegevens staan alleen in deze browser. Maak af en toe een back-up.</p>
       <div class="row">
@@ -263,6 +325,7 @@
   <nav class="tabbar">
     <button data-go="today" class="active"><span>☰</span>Vandaag</button>
     <button data-go="add"><span>＋</span>Toevoegen</button>
+    <button data-go="progress"><span>↗</span>Voortgang</button>
     <button data-go="settings"><span>⚙</span>Instellingen</button>
   </nav>
 
